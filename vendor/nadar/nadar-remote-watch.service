@@ -1,0 +1,10 @@
+[Unit]
+Description=NADAR external port reachability change detection
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/nadar --remote-watch-once
+NoNewPrivileges=true
+TimeoutStartSec=240

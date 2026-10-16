@@ -1,0 +1,11 @@
+[Unit]
+Description=Check externally reachable ports every five minutes using NADAR
+
+[Timer]
+OnStartupSec=1min
+OnUnitInactiveSec=5min
+AccuracySec=15s
+Unit=nadar-remote-watch.service
+
+[Install]
+WantedBy=timers.target

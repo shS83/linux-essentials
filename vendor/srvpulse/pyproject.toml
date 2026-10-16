@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "srvpulse"
+version = "0.1.0"
+description = "A vivid read-only Linux server and HTTPS health radar via SSH"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["rich>=13.7,<16"]
+
+[project.scripts]
+srvpulse = "srvpulse.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/srvpulse"]

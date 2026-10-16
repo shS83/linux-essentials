@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# CPROJ - Promethean Project Teleporter
+# This executable discovers/projects and RETURNS a directory on stdout.
+# Source shell/cproj.bash in your shell to actually change directories.
+set -o pipefail
+
+VERSION='0.1.1'
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cproj"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cproj"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cproj"
+CONFIG_FILE="$CONFIG_DIR/cproj.conf"
+INDEX_FILE="$CACHE_DIR/projects.txt"
+MANUAL_FILE="$CONFIG_DIR/manual-projects.txt"
+RECENT_FILE="$STATE_DIR/recent.txt"
+
+# User-owned config is Bash, and is sourced deliberately.
+CPROJ_ROOTS=("$HOME/Code" '/Tools')
+CPROJ_MAX_DEPTH=5
+CPROJ_CACHE_TTL=3600
+CPROJ_PREVIEW_LINES=10
+CPROJ_AUTO_VENV=1
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+# Save stdout for machine-readable paths. All decoration goes to fzf/terminal.
+SELF=${BASH_SOURCE[0]}
+SELF=$(realpath -- "$SELF") || exit 1
+
+warn() { printf 'CPROJ: %s\n' "$*" >&2; }
+die() { warn "$*"; exit 1; }
+
+validate_config() {
+    [[ $CPROJ_MAX_DEPTH =~ ^[1-9][0-9]?$ ]] || die 'CPROJ_MAX_DEPTH must be between 1 and 99.'
+    [[ $CPROJ_CACHE_TTL =~ ^[0-9]+$ ]] || die 'CPROJ_CACHE_TTL must be a nonnegative number.'
+    [[ $CPROJ_PREVIEW_LINES =~ ^[1-9][0-9]?$ ]] || die 'CPROJ_PREVIEW_LINES must be between 1 and 99.'
+    [[ ${#CPROJ_ROOTS[@]} -gt 0 ]] || die 'CPROJ_ROOTS must be a nonempty Bash array.'
+    [[ $CPROJ_AUTO_VENV == 0 || $CPROJ_AUTO_VENV == 1 ]] || die 'CPROJ_AUTO_VENV must be 0 or 1.'
+}
+
+# fzf records are tab separated and history/index use newline separated paths.
+# We deliberately skip rare directory names containing tabs or newlines.
+valid_path() { [[ "$1" != *$'\n'* && "$1" != *$'\t'* && -d "$1" ]]; }
+absolute_dir() { ( cd -P -- "$1" 2>/dev/null && pwd -P ); }
+is_project() {
+    local p=$1
+    [[ -e "$p/.git" || -d "$p/.git" || -f "$p/pyproject.toml" ||
+       -f "$p/Cargo.toml" || -f "$p/package.json" ||
+       -f "$p/CMakeLists.txt" || -f "$p/go.mod" ||
+       -f "$p/composer.json" || -f "$p/Gemfile" ||
+       -f "$p/Makefile" ]]
+}
+
+refresh_index() {
+    validate_config
+    mkdir -p -- "$CACHE_DIR" || die "Cannot create cache directory: $CACHE_DIR"
+    local tmp root dir full marker count=0
+    tmp=$(mktemp "$CACHE_DIR/.projects.XXXXXXXX") || die 'Cannot create temporary index.'
+    local -A seen=()
+    local -a paths=()
+
+    for root in "${CPROJ_ROOTS[@]}"; do
+        [[ -d "$root" ]] || continue
+        # Prune heavy directories and Git internals. A project can be nested
+        # within another project, as long as it is not in a pruned directory.
+        while IFS= read -r -d '' dir; do
+            is_project "$dir" || continue
+            full=$(absolute_dir "$dir") || continue
+            valid_path "$full" || continue
+            [[ -v 'seen[$full]' ]] && continue
+            seen[$full]=1
+            paths+=("$full")
+        done < <(find "$root" -maxdepth "$CPROJ_MAX_DEPTH" \
+            \( -type d \( -name '.git' -o -name '.venv' -o -name 'node_modules' \
+                -o -name '__pycache__' -o -name '.tox' -o -name '.cache' \
+                -o -name 'dist' -o -name 'build' \) -prune \) \
+            -o \( -type d -print0 \) 2>/dev/null)
+    done
+
+    if [[ -f "$MANUAL_FILE" ]]; then
+        while IFS= read -r dir || [[ -n $dir ]]; do
+            valid_path "$dir" || continue
+            full=$(absolute_dir "$dir") || continue
+            [[ -v 'seen[$full]' ]] && continue
+            seen[$full]=1
+            paths+=("$full")
+        done < "$MANUAL_FILE"
+    fi
+
+    if ((${#paths[@]})); then
+        printf '%s\n' "${paths[@]}" | LC_ALL=C sort -u > "$tmp" || { rm -f -- "$tmp"; die 'Unable to sort project index.'; }
+    else
+        : > "$tmp"
+    fi
+    mv -f -- "$tmp" "$INDEX_FILE" || die 'Unable to write project index.'
+    count=$(wc -l < "$INDEX_FILE")
+    warn "Indexed $count project(s)."
+}
+
+ensure_index() {
+    local age now modified
+    if [[ ! -f "$INDEX_FILE" ]]; then
+        refresh_index
+        return
+    fi
+    now=$(date +%s)
+    modified=$(stat -c %Y -- "$INDEX_FILE" 2>/dev/null || printf '0')
+    age=$((now - modified))
+    if (( CPROJ_CACHE_TTL == 0 || age > CPROJ_CACHE_TTL )); then
+        refresh_index
+    fi
+}
+
+print_index() {
+    ensure_index
+    local p
+    while IFS= read -r p; do
+        valid_path "$p" && printf '%s\n' "$p"
+    done < "$INDEX_FILE"
+}
+
+add_manual() {
+    (($# == 1)) || die 'Usage: cproj --add DIRECTORY'
+    local full tmp
+    full=$(absolute_dir "$1") || die "Directory does not exist: $1"
+    valid_path "$full" || die 'Directory name cannot contain a tab or newline.'
+    mkdir -p -- "$CONFIG_DIR" || die 'Cannot create config directory.'
+    if [[ -f "$MANUAL_FILE" ]] && grep -Fqx -- "$full" "$MANUAL_FILE"; then
+        warn "Already in manual projects: $full"
+    else
+        printf '%s\n' "$full" >> "$MANUAL_FILE" || die 'Cannot write manual projects.'
+        warn "Added project: $full"
+    fi
+    refresh_index
+}
+
+record_recent() {
+    (($# == 1)) || die 'Usage: cproj --record DIRECTORY'
+    local path tmp old count=0
+    path=$(absolute_dir "$1") || exit 1
+    valid_path "$path" || exit 1
+    mkdir -p -- "$STATE_DIR" || exit 1
+    tmp=$(mktemp "$STATE_DIR/.recent.XXXXXXXX") || exit 1
+    printf '%s\n' "$path" > "$tmp"
+    if [[ -f "$RECENT_FILE" ]]; then
+        while IFS= read -r old; do
+            [[ $old == "$path" ]] && continue
+            valid_path "$old" || continue
+            printf '%s\n' "$old" >> "$tmp"
+            ((++count >= 79)) && break
+        done < "$RECENT_FILE"
+    fi
+    mv -f -- "$tmp" "$RECENT_FILE"
+}
+
+previous_project() {
+    [[ -f "$RECENT_FILE" ]] || die 'No previous project in history.'
+    local current p
+    current=$(pwd -P)
+    while IFS= read -r p; do
+        [[ "$p" == "$current" ]] && continue
+        valid_path "$p" || continue
+        printf '%s\n' "$p"
+        return 0
+    done < "$RECENT_FILE"
+    die 'No previous project in history.'
+}
+
+name_match() {
+    local needle=${1,,} p base
+    local -a exact=() partial=()
+    while IFS= read -r p; do
+        base=${p##*/}
+        [[ ${base,,} == "$needle" ]] && exact+=("$p")
+        [[ ${base,,} == *"$needle"* ]] && partial+=("$p")
+    done < <(print_index)
+    if ((${#exact[@]} == 1)); then
+        printf '%s\n' "${exact[0]}"
+    elif ((${#exact[@]} > 1)); then
+        printf 'CPROJ: Ambiguous project name. Matches:\n' >&2
+        printf '  %s\n' "${exact[@]}" >&2
+        return 1
+    elif ((${#partial[@]} == 1)); then
+        printf '%s\n' "${partial[0]}"
+    elif ((${#partial[@]} > 1)); then
+        printf 'CPROJ: Multiple projects match "%s":\n' "$1" >&2
+        printf '  %s\n' "${partial[@]}" >&2
+        return 1
+    else
+        warn "Project not found: $1 (try cproj --refresh)"
+        return 1
+    fi
+}
+
+project_kind() {
+    local p=$1
+    if [[ -f "$p/pyproject.toml" ]]; then printf 'Python';
+    elif [[ -f "$p/Cargo.toml" ]]; then printf 'Rust';
+    elif [[ -f "$p/package.json" ]]; then printf 'Node.js';
+    elif [[ -f "$p/go.mod" ]]; then printf 'Go';
+    elif [[ -f "$p/CMakeLists.txt" ]]; then printf 'CMake';
+    elif [[ -f "$p/composer.json" ]]; then printf 'PHP';
+    elif [[ -f "$p/Gemfile" ]]; then printf 'Ruby';
+    elif [[ -f "$p/Makefile" ]]; then printf 'Make';
+    else printf 'Git / directory'; fi
+}
+
+preview() {
+    (($# == 1)) || exit 1
+    local p=$1 branch changes upstream last readme
+    valid_path "$p" || exit 1
+    local reset=$'\033[0m' uv=$'\033[38;2;183;150;255m' cyan=$'\033[38;2;115;219;229m'
+    local orange=$'\033[38;2;255;194;128m' dim=$'\033[38;2;138;153;181m'
+    printf '%s╭── ◈ CPROJ / PROJECT INTELLIGENCE ──╮%s\n\n' "$uv" "$reset"
+    printf '%s%s%s\n' "$cyan" "${p##*/}" "$reset"
+    printf '%s%s%s\n' "$dim" "$p" "$reset"
+    printf '\n%sTYPE%s  %s\n' "$uv" "$reset" "$(project_kind "$p")"
+    if [[ -f "$p/.venv/bin/activate" ]]; then
+        printf '%sENV%s   .venv ready (auto-activation: %s)\n' "$uv" "$reset" "$([[ $CPROJ_AUTO_VENV == 1 ]] && printf on || printf off)"
+    elif [[ -d "$p/.venv" ]]; then
+        printf '%sENV%s   .venv found (missing bin/activate)\n' "$uv" "$reset"
+    elif [[ -f "$p/uv.lock" ]]; then
+        printf '%sENV%s   uv.lock detected\n' "$uv" "$reset"
+    fi
+    if git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        branch=$(git -C "$p" symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached HEAD')
+        changes=$(git -C "$p" status --porcelain=v1 --untracked-files=normal 2>/dev/null | wc -l)
+        last=$(git -C "$p" log -1 --format='%h %s' 2>/dev/null || true)
+        printf '\n%sGIT%s   ⎇ %s\n' "$uv" "$reset" "$branch"
+        if ((changes)); then
+            printf '%sWORK%s  %s changed/untracked file(s)\n' "$orange" "$reset" "$changes"
+        else
+            printf '%sWORK%s  clean\n' "$cyan" "$reset"
+        fi
+        [[ -n "$last" ]] && printf '%sLAST%s  %s\n' "$uv" "$reset" "$last"
+    fi
+    for readme in "$p/README.md" "$p/readme.md" "$p/README"; do
+        if [[ -f "$readme" ]]; then
+            printf '\n%s── README ──────────────────────────────%s\n' "$dim" "$reset"
+            # Avoid raw terminal escape sequences or carriage returns from files.
+            LC_ALL=C sed -n "1,${CPROJ_PREVIEW_LINES}p" "$readme" | tr -d '\033\r' | cut -c 1-110
+            break
+        fi
+    done
+    printf '\n%s[ENTER] TELEPORT    [ESC] CANCEL%s\n' "$cyan" "$reset"
+}
+
+fzf_picker() {
+    command -v fzf >/dev/null 2>&1 || die 'fzf not found. Install with: sudo pacman -S fzf'
+    local mode=${1:-all} p name row selection preview_cmd
+    local -a paths=()
+    if [[ "$mode" == recent ]]; then
+        [[ -f "$RECENT_FILE" ]] || die 'No recent projects yet.'
+        while IFS= read -r p; do
+            valid_path "$p" && paths+=("$p")
+        done < "$RECENT_FILE"
+    else
+        while IFS= read -r p; do paths+=("$p"); done < <(print_index)
+    fi
+    ((${#paths[@]})) || die 'No projects found. Adjust CPROJ_ROOTS or use cproj --add DIRECTORY.'
+    printf -v preview_cmd '%q' "$SELF"
+    preview_cmd+=" --preview {2}"
+    selection=$(
+        for p in "${paths[@]}"; do
+            name=${p##*/}
+            printf '\033[38;2;183;150;255m✦\033[0m %-28s\t%s\n' "$name" "$p"
+        done | fzf --ansi --delimiter=$'\t' --with-nth=1,2 \
+            --height='95%' --min-height=15 --layout=reverse \
+            --border=rounded --border-label=' ◈ CPROJ / PROJECT TELEPORTER v0.1.1 ' \
+            --prompt='⌁ teleport › ' --pointer='❯' --marker='◆' \
+            --header='ENTER teleport  ·  ESC cancel  ·  PREVIEW: Git / README / environment' \
+            --preview="$preview_cmd" \
+            --preview-window='right,58%,border-left,wrap' \
+            --color='fg:#c8d4ee,bg:#0b1020,hl:#ffbb79,fg+:#ffffff,bg+:#282747,hl+:#c9a7ff,info:#6ce5cf,prompt:#ffbb79,pointer:#82f7d4,marker:#82f7d4,spinner:#c9a7ff,header:#9b9fcb,border:#7667ad'
+    ) || return 1
+    [[ $selection == *$'\t'* ]] || die 'Invalid picker output.'
+    p=${selection#*$'\t'}
+    valid_path "$p" || die 'Selected project no longer exists.'
+    printf '%s\n' "$p"
+}
+
+help() {
+    cat <<'HELP'
+CPROJ - Promethean Project Teleporter v0.1.1
+
+USAGE
+  cproj                       Interactive project navigator (fzf)
+  cproj NAME                  Jump to a unique project name (partial matches work)
+  cproj -                     Jump to the previously visited project
+  cproj --recent              Browse previously visited projects
+  cproj --list                List discovered project directories
+  cproj --add DIRECTORY       Add a directory manually
+  cproj --refresh             Refresh the project index
+  cproj --config              Show the configuration file path
+  cproj --help                Show help
+  cproj --version             Show version
+
+DEFAULT ROOTS
+  ~/Code   /Tools
+
+CONFIGURATION
+  ~/.config/cproj/cproj.conf
+  CPROJ_ROOTS=("$HOME/Code" "/Tools")
+  CPROJ_MAX_DEPTH=5
+  CPROJ_CACHE_TTL=3600
+  CPROJ_AUTO_VENV=1     # Activate .venv when changing projects (0=disabled)
+
+IMPORTANT
+  The executable returns the selected directory on stdout. To actually
+  change directories and automatically switch .venv environments, source
+  cproj.bash in ~/.bashrc (see README.md).
+  CPROJ uses Bash and fzf. Paths containing tabs/newlines are not indexed.
+HELP
+}
+
+main() {
+    case ${1:-} in
+        --help|-h) help ;;
+        --version|-V) printf '%s\n' "$VERSION" ;;
+        --list) validate_config; print_index ;;
+        --refresh) refresh_index ;;
+        --add) shift; add_manual "$@" ;;
+        --config) printf '%s\n' "$CONFIG_FILE" ;;
+        --record) shift; record_recent "$@" ;;
+        --preview) shift; validate_config; preview "$@" ;;
+        --recent) validate_config; fzf_picker recent ;;
+        -) previous_project ;;
+        '') validate_config; fzf_picker ;;
+        --*) die "Unknown option: $1 (try cproj --help)" ;;
+        *) (($# == 1)) || die 'Expected exactly one project name.'
+           validate_config; name_match "$1" ;;
+    esac
+}
+main "$@"

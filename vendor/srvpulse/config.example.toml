@@ -1,0 +1,31 @@
+# SRVPULSE — example configuration for your three SSH-managed hosts.
+# SSH host aliases are resolved by OpenSSH (~/.ssh/config).
+# HTTPS sites are independent of SSH hosts and are checked from this workstation.
+
+[settings]
+ssh_timeout = 45
+https_timeout = 6
+certificate_warn_days = 30
+disk_warn_pct = 80
+disk_critical_pct = 90
+memory_warn_pct = 90
+
+[servers.ouroboros]
+ssh = "ouroboros"
+services = ["postfix", "opendkim", "nadar-pong.socket"]
+
+[servers.lmlilja]
+ssh = "lmlilja"
+services = ["nginx", "granian"]
+
+[servers.asuntokauppa]
+ssh = "asuntokauppa"
+services = ["nginx", "granian"]
+
+[https]
+domains = [
+  "lilja-viherlampi.fi",
+  "asuntokauppa-turku.fi",
+  "viherlampi.fi",
+  "prometheus-alexander.fi",
+]
