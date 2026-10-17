@@ -55,27 +55,23 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 | Tool | Executable | Additional files |
 | --- | --- | --- |
 | CPROJ v0.1.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
-| CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
+| CmdVault v0.1.0 | `~/.local/bin/cmdvault` | Bundled upstream executable; Python >= 3.9 required |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | SRVPULSE v0.1.0 | `~/.local/bin/srvpulse` | Python environment `~/.local/share/linux-essentials/venvs/srvpulse/` and `~/.config/srvpulse/config.toml` |
 
-The package *bundles source code* for CPROJ, NADAR and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+The package *bundles source code* for CPROJ, CmdVault, NADAR and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
 
-### Bring your own CmdVault
+### CmdVault
 
-The previous versions of the toolkit did not include CmdVault's source code, so this release does **not** silently replace it with a dummy application. Choose either of these methods:
+CmdVault is bundled from [shS83/cmdvault](https://github.com/shS83/cmdvault), so no separate checkout or `--source` option is required. Its executable is copied directly, matching upstream's installer. You can still override the bundled snapshot:
 
 ```bash
 # Install from an existing CmdVault checkout or script
 ./install.sh --profile developer --source cmdvault="$HOME/Code/cmdvault"
 
-# Or bundle your own code in the Git repository (git commit it yourself)
-mkdir -p vendor/cmdvault
-cp /path/to/your/cmdvault.py vendor/cmdvault/cmdvault.py
-./install.sh --profile developer
 ```
 
-`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. When no source is available, the Summary reports **source needed** and the installer reports the skipped personal tool explicitly (it does not invent a working app). If you have already installed CmdVault, it is treated as installed.
+`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. A standalone executable takes precedence over `pyproject.toml`, because upstream's metadata does not declare a packaged CLI. If you have already installed CmdVault, it is treated as installed; use `--upgrade-tools` to replace it. CmdVault needs Python >= 3.9; `fzf` enables interactive selection.
 
 ### Optional integration (requires approval)
 

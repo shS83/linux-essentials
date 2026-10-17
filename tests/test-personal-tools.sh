@@ -40,6 +40,8 @@ cat > "$TMP/source cmdvault/cmdvault" <<'SCRIPT'
 echo CMDVAULT
 SCRIPT
 chmod +x "$TMP/bin/"* "$TMP/source cmdvault/cmdvault"
+# Upstream has metadata but no Python console_scripts entry point.
+printf '[project]\nname = "cmdvault"\nversion = "0.1.0"\n' > "$TMP/source cmdvault/pyproject.toml"
 export HOME="$TMP/home" PATH="$TMP/bin:$PATH" XDG_RUNTIME_DIR="$TMP/runtime"
 export LE_OS_RELEASE="$TMP/os-release" LE_TEST_LOG="$TMP/actions.log" NO_COLOR=1
 passes=0
@@ -48,7 +50,7 @@ check() { "$@" || { echo "FAIL: $*" >&2; exit 1; }; ((++passes)); }
 summary=$("$ROOT/install.sh" --profile developer --summary)
 check grep -q 'lsd' <<< "$summary"
 check grep -q 'cproj' <<< "$summary"
-check grep -q 'cmdvault.*source needed' <<< "$summary"
+check grep -q 'cmdvault.*LOCAL:bundled' <<< "$summary"
 check grep -q 'nadar' <<< "$summary"
 check grep -q 'srvpulse' <<< "$summary"
 
@@ -63,6 +65,7 @@ check grep -q 'Personal install:.*cmdvault' <<< "$dry"
   --source "cmdvault=$TMP/source cmdvault" > "$TMP/install.out"
 check test -x "$HOME/.local/bin/cproj"
 check test -x "$HOME/.local/bin/cmdvault"
+check grep -q '^CMDVAULT$' <("$HOME/.local/bin/cmdvault")
 check test -x "$HOME/.local/bin/nadar"
 check test -x "$HOME/.local/bin/srvpulse"
 check test -r "$HOME/.config/cproj/cproj.bash"
@@ -83,12 +86,18 @@ check grep -q '^custom=true$' "$HOME/.config/cproj/cproj.conf"
 [[ $(grep -cF 'source "$HOME/.config/cproj/cproj.bash"' "$HOME/.bashrc") == 1 ]] || exit 1
 ((++passes))
 
-# New checkout without a cmdvault source must fail visibly, not install a fake.
+# Default installation uses the real bundled upstream executable.
 rm -f "$HOME/.local/bin/cmdvault"
 cat > "$TMP/only-vault.list" <<'EOF2'
 cmdvault
 EOF2
-if "$ROOT/install.sh" --import "$TMP/only-vault.list" --yes > "$TMP/missing.out" 2>&1; then
+"$ROOT/install.sh" --import "$TMP/only-vault.list" --yes > "$TMP/bundled.out"
+check cmp "$ROOT/vendor/cmdvault/cmdvault" "$HOME/.local/bin/cmdvault"
+check grep -q '0.1.0' <("$HOME/.local/bin/cmdvault" --version)
+
+# An explicitly missing source must still fail, without falling back silently.
+rm -f "$HOME/.local/bin/cmdvault"
+if "$ROOT/install.sh" --import "$TMP/only-vault.list" --yes --source "cmdvault=$TMP/missing" > "$TMP/missing.out" 2>&1; then
   echo 'FAIL: missing cmdvault source was silently accepted' >&2; exit 1
 fi
 check grep -q 'Source for cmdvault is missing' "$TMP/missing.out"
