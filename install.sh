@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.3.0'
+readonly VERSION='0.4.0'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -13,9 +13,10 @@ declare -a TOOLS=(
   fzf fd ripgrep bat eza lsd yazi
   btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq
   git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace
-  cproj cmdvault nadar srvpulse gitpublish
+  cproj cmdvault nadar srvpulse gitpublish cmedia
+  uv chafa ffmpeg python3
 )
-declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish)
+declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia)
 declare -A TOOL_SOURCES=()
 declare -A KNOWN=() SELECTED=() STATUS=() PACKAGE=()
 for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
@@ -55,6 +56,7 @@ Usage:
   $SCRIPT_NAME --profile server --yes  Noninteractive installation
   $SCRIPT_NAME --profile all --dry-run Preview, never install
   $SCRIPT_NAME --profile developer --source cmdvault=/path/to/cmdvault
+  $SCRIPT_NAME --import <(printf "cmedia\n") --source cmedia=~/Code/cmedia
   $SCRIPT_NAME --profile all --summary Show status, never install
   $SCRIPT_NAME --list                  Show the complete toolkit catalog
   $SCRIPT_NAME --export [FILE]         Export detected installed tools to a list
@@ -81,13 +83,12 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
-<<<<<<< HEAD
-  • Bundled: cproj, nadar, srvpulse and gitpublish; cmdvault needs your source code.
+  • Bundled: cproj, nadar, srvpulse, gitpublish, and the cmedia diff installer.
+  • CmdVault still needs your source. Cmedia clones GitHub if no local checkout exists.
+  • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
-=======
-  • Bundled: cproj, cmdvault, nadar and srvpulse.
->>>>>>> 9a2a42643e463cabc0fe81f5b1cecb8ae58b91ad
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
+  • Cmedia installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
   • The script never adds package repositories.
 EOF
@@ -120,7 +121,7 @@ parse_args() {
         local spec=$2 name path
         [[ $spec == *=* ]] || die '--source requires NAME=DIR'
         name=${spec%%=*}; path=${spec#*=}
-        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish) ;; *) die "Unknown personal tool: $name" ;; esac
+        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia) ;; *) die "Unknown personal tool: $name" ;; esac
         [[ -n $path ]] || die '--source requires a nonempty directory or file path'
         TOOL_SOURCES[$name]=$path
         shift 2 ;;
@@ -187,7 +188,7 @@ package_for() {
 }
 
 is_personal_tool() {
-  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish) return 0 ;; *) return 1 ;; esac
+  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia) return 0 ;; *) return 1 ;; esac
 }
 
 personal_source() {
@@ -199,11 +200,21 @@ personal_source() {
     printf '%s' "$candidate"
     return 0
   fi
+  # Prefer a developer's checkout over the bundled installer for cmedia.
+  # The vendor folder contains a patch/installer, not the upstream source tree.
+  if [[ $id == cmedia ]]; then
+    for candidate in "$HOME/Code/cmedia" "/Tools/cmedia"; do
+      if [[ -f $candidate/src/cmedia/app.py && -f $candidate/pyproject.toml ]]; then
+        printf '%s' "$candidate"; return 0
+      fi
+    done
+  fi
   base="$SCRIPT_DIR/vendor/$id"
   if [[ -d $base ]]; then
     case $id in
       cmdvault) [[ -f $base/cmdvault || -f $base/cmdvault.py || -f $base/pyproject.toml ]] || return 1 ;;
       gitpublish) [[ -f $base/gitpublish ]] || return 1 ;;
+      cmedia) [[ -f $base/install.sh && -f $base/patch_cmedia.py ]] || return 1 ;;
     esac
     printf '%s' "$base"
     return 0
@@ -296,9 +307,9 @@ select_profile() {
     minimal)
       pick='git curl wget unzip zip openssh fzf fd ripgrep bat eza lsd pv jq' ;;
     desktop)
-      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish' ;;
+      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia' ;;
     developer)
-      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish' ;;
+      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia' ;;
     server)
       pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat lsd pv htop ncdu jq tmux byobu lsof nmap strace srvpulse' ;;
     all)
@@ -349,7 +360,7 @@ export_tools() {
 
 show_banner() {
   printf '%b╭─────────────────────────────────────────────────────────╮%b\n' "$C_PURPLE" "$C_RESET"
-  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-17s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
+  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-20s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
   printf '%b╰─────────────────────────────────────────────────────────╯%b\n' "$C_PURPLE" "$C_RESET"
   printf '%b  SYSTEM%b %-18s %bMANAGER%b %s\n' "$C_MUTED" "$C_RESET" "$DISTRO" "$C_MUTED" "$C_RESET" "$PM"
 }
@@ -413,6 +424,13 @@ resolve_dependencies() {
   if [[ -n ${SELECTED[gitpublish]:-} ]]; then
     SELECTED[git]=1
     SELECTED[gh]=1
+  fi
+  if [[ -n ${SELECTED[cmedia]:-} ]]; then
+    SELECTED[git]=1
+    SELECTED[uv]=1
+    SELECTED[python3]=1
+    SELECTED[chafa]=1
+    SELECTED[ffmpeg]=1
   fi
 }
 
@@ -545,6 +563,23 @@ install_personal_tool() {
         warn 'NADAR: no active user systemd manager; units installed but not enabled.'
       fi
       ;;
+    cmedia)
+      # The checked-in vendor component is a patch/installer, NOT a copy of
+      # the user's cmedia source. Preserve the original source layout and
+      # install the proper Python console entry point using uv tool.
+      local cmedia_installer="$SCRIPT_DIR/vendor/cmedia/install.sh"
+      [[ -f $cmedia_installer && -f $SCRIPT_DIR/vendor/cmedia/patch_cmedia.py ]] || {
+        error 'The bundled cmedia patch installer is missing'; return 1;
+      }
+      if [[ $src == "$SCRIPT_DIR/vendor/cmedia" ]]; then
+        bash "$cmedia_installer" || return 1
+      else
+        [[ -d $src && -f $src/src/cmedia/app.py && -f $src/pyproject.toml ]] || {
+          error 'Cmedia source must contain src/cmedia/app.py and pyproject.toml'; return 1;
+        }
+        bash "$cmedia_installer" "$src" || return 1
+      fi
+      ;;
     gitpublish)
       local file=$src
       if [[ -d $src ]]; then file="$src/gitpublish"; fi
@@ -553,10 +588,7 @@ install_personal_tool() {
       install -Dm755 -- "$file" "$bindir/gitpublish" || return 1
       ;;
     srvpulse|cmdvault)
-      # CmdVault upstream ships a standalone executable alongside metadata-only
-      # pyproject.toml (no packaged CLI entry point). Prefer that executable.
-      if [[ -d $src && -f $src/pyproject.toml ]] &&
-         ! [[ $id == cmdvault && ( -f $src/cmdvault || -f $src/cmdvault.py ) ]]; then
+      if [[ -d $src && -f $src/pyproject.toml ]]; then
         install_python_tool "$id" "$src" || return 1
       elif [[ $id == cmdvault ]]; then
         local file=$src

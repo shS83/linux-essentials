@@ -1,11 +1,11 @@
-# CmdVault v0.1.0
+# Bring your own CmdVault source
 
-Bundled from https://github.com/shS83/cmdvault at commit
-`7da8b44fe87c149273c8ec3008af6d77d066a9e3`. The `cmdvault` executable
-is an unchanged copy of upstream, distributed with its MIT license.
+CmdVault was mentioned as an existing personal tool, but no CmdVault source
+code is present in the conversation artifacts. The installer therefore
+requires its existing source and does not generate a fake replacement.
 
-The installer copies it to `~/.local/bin/cmdvault`. Requires Python >= 3.9;
-fzf enables interactive selection. No pip installation is needed.
+Place `cmdvault`, `cmdvault.py`, or a Python project with `pyproject.toml`
+under this directory, or use `--source cmdvault=/path/to/project`.
 
-Override this snapshot with `--source cmdvault=/path/to/project`.
-Upstream's `pyproject.toml` is metadata only; prefer its standalone executable.
+Do not put secrets or `.venv` directories into Git. Review your source before
+publishing the repository.

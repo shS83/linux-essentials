@@ -1,8 +1,8 @@
-# Linux Essentials Bootstrap v0.3.0
+# Linux Essentials Bootstrap v0.4.0
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
-The expanded catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and the five personal programs **CPROJ**, **CmdVault**, **NADAR**, **SRVPULSE**, and **GitPublish**. `bpytop` is superseded by `btop`.
+The expanded catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and the six personal programs **CPROJ**, **CmdVault**, **NADAR**, **SRVPULSE**, **GitPublish** and **Cmedia**. It also catalogs `uv`, `python3`, `ffmpeg` and `chafa` for Cmedia installation. `bpytop` is superseded by `btop`.
 
 ## Fresh-install bootstrap
 
@@ -44,7 +44,7 @@ The GitHub address is a placeholder, not a live project. You can also copy the e
 ./install.sh --help
 ```
 
-Five profiles: **Minimal** (Git, search and transfer), **Desktop** (file management, system-monitoring tools and personal tools), **Developer** (Desktop plus development utilities), **Server** (SSH, diagnostics, Byobu and SRVPULSE) and **All** (entire catalog). `lsd` now belongs even to **Minimal**. The `--summary`, `--dry-run`, `--list`, `--export` commands never install packages.
+Five profiles: **Minimal** (Git, search and transfer), **Desktop** (file management, system-monitoring tools and personal tools, including Cmedia), **Developer** (Desktop plus development utilities), **Server** (SSH, diagnostics, Byobu and SRVPULSE) and **All** (entire catalog). `lsd` now belongs even to **Minimal**. The `--summary`, `--dry-run`, `--list`, `--export` commands never install packages.
 
 The Summary uses TrueColor on compatible TTYs and disables colors in pipes and when `NO_COLOR=1`. On Arch, Byobu is ordinarily an AUR package and is only selected for installation using **`--aur`** with a preinstalled `yay` or `paru` helper. Debian's `fd-find` and `batcat` naming differences are handled with user-local symlinks if needed.
 
@@ -55,13 +55,36 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 | Tool | Executable | Additional files |
 | --- | --- | --- |
 | CPROJ v0.1.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
-| CmdVault v0.1.0 | `~/.local/bin/cmdvault` | Bundled upstream executable; Python >= 3.9 required |
+| CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
+| Cmedia | `~/.local/bin/cmedia` | Bundled anti-flicker patch & installer; requires upstream source, `uv`, `git`, `python3`, `chafa` and `ffmpeg` |
 | SRVPULSE v0.1.0 | `~/.local/bin/srvpulse` | Python environment `~/.local/share/linux-essentials/venvs/srvpulse/` and `~/.config/srvpulse/config.toml` |
 
-<<<<<<< HEAD
-The package *bundles source code* for CPROJ, NADAR, GitPublish and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+The package *bundles source code* for CPROJ, NADAR, GitPublish and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For SRVPULSE/CmdVault Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. Cmedia specifically uses `uv tool install` and its upstream project requires Python 3.13+. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+
+### Cmedia: flicker-free browser and portable launcher
+
+The **Desktop**, **Developer**, and **All** profiles now select Cmedia; Minimal and Server are unchanged. Selecting `cmedia` alone through `--import` also selects `git`, `uv`, `python3`, `ffmpeg` and `chafa`. Cmedia needs a functioning terminal and uses the original preview/media implementations.
+
+`vendor/cmedia/` includes the tested patch/installer scripts, **not a full copy of the upstream Python source**. On a development machine, the bootstrap tries `~/Code/cmedia` first. Otherwise it downloads the `root` branch of [shS83/cmedia](https://github.com/shS83/cmedia) when installing (an Internet connection is needed). You can explicitly point to a source checkout (recommended if you have local changes):
+
+```bash
+# Install only Cmedia from a local checkout:
+printf 'cmedia\n' > /tmp/cmedia-tools.list
+./install.sh --import /tmp/cmedia-tools.list --dry-run --source "cmedia=$HOME/Code/cmedia"
+./install.sh --import /tmp/cmedia-tools.list --yes --source "cmedia=$HOME/Code/cmedia"
+
+# Or install/upgrade via the Desktop profile:
+./install.sh --profile desktop --upgrade-tools --source "cmedia=$HOME/Code/cmedia"
+
+# Command works everywhere when ~/.local/bin is in PATH:
+cmedia ~/Pictures
+```
+
+The patch changes **only the file-list selection bars** to update the affected terminal rows instead of clearing the whole screen after ↑/↓. The image/preview rendering implementation is left intact. The patch writes `src/cmedia/app.py.bak` once if it modifies your checkout, and refuses unknown upstream code layouts. Changes to an existing checkout should be inspected with `git diff` and committed/pushed separately if desired. For upgrades, use `--upgrade-tools` to overwrite an already installed command.
+
+**Dependency note:** `uv` must be available (some Debian/Ubuntu repositories may not package it), and the upstream project requires Python >=3.13. `uv` can obtain the required Python runtime when configured to download Python. `chafa` and `ffmpeg` also need to be installed for the media preview functionality. The patch itself is bundled, so a local-source install does not download patch code.
 
 ### GitPublish: create and publish your repository
 
@@ -87,21 +110,22 @@ common secret file patterns. It can initialize Git and create the first commit.
 
 `keyio` is deliberately **not bundled**: Python projects should install it directly
 from `https://github.com/shS83/keyio`, using their own environment, when needed.
-=======
-The package *bundles source code* for CPROJ, CmdVault, NADAR and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
->>>>>>> 9a2a42643e463cabc0fe81f5b1cecb8ae58b91ad
 
-### CmdVault
+### Bring your own CmdVault
 
-CmdVault is bundled from [shS83/cmdvault](https://github.com/shS83/cmdvault), so no separate checkout or `--source` option is required. Its executable is copied directly, matching upstream's installer. You can still override the bundled snapshot:
+The previous versions of the toolkit did not include CmdVault's source code, so this release does **not** silently replace it with a dummy application. Choose either of these methods:
 
 ```bash
 # Install from an existing CmdVault checkout or script
 ./install.sh --profile developer --source cmdvault="$HOME/Code/cmdvault"
 
+# Or bundle your own code in the Git repository (git commit it yourself)
+mkdir -p vendor/cmdvault
+cp /path/to/your/cmdvault.py vendor/cmdvault/cmdvault.py
+./install.sh --profile developer
 ```
 
-`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. A standalone executable takes precedence over `pyproject.toml`, because upstream's metadata does not declare a packaged CLI. If you have already installed CmdVault, it is treated as installed; use `--upgrade-tools` to replace it. CmdVault needs Python >= 3.9; `fzf` enables interactive selection.
+`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. When no source is available, the Summary reports **source needed** and the installer reports the skipped personal tool explicitly (it does not invent a working app). If you have already installed CmdVault, it is treated as installed.
 
 ### Optional integration (requires approval)
 
@@ -132,9 +156,10 @@ The `--export` output is a human-readable list of installed known tool IDs, not 
 bash -n install.sh
 bash tests/test-bootstrap.sh
 bash tests/test-personal-tools.sh
+bash tests/test-cmedia.sh
 ```
 
-Both test scripts use fake package managers and isolated temporary HOME directories; they don't install real system packages.
+All test scripts use fake package managers and isolated temporary HOME directories; they do not install real system packages or access GitHub.
 
 ## License
 
