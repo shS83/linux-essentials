@@ -1,8 +1,8 @@
-# Linux Essentials Bootstrap v0.2.0
+# Linux Essentials Bootstrap v0.3.0
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
-The 38-item catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and the four personal programs **CPROJ**, **CmdVault**, **NADAR**, and **SRVPULSE**. `bpytop` is superseded by `btop`.
+The expanded catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and the five personal programs **CPROJ**, **CmdVault**, **NADAR**, **SRVPULSE**, and **GitPublish**. `bpytop` is superseded by `btop`.
 
 ## Fresh-install bootstrap
 
@@ -57,9 +57,35 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 | CPROJ v0.1.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
 | CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
+| GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
 | SRVPULSE v0.1.0 | `~/.local/bin/srvpulse` | Python environment `~/.local/share/linux-essentials/venvs/srvpulse/` and `~/.config/srvpulse/config.toml` |
 
-The package *bundles source code* for CPROJ, NADAR and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+The package *bundles source code* for CPROJ, NADAR, GitPublish and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+
+### GitPublish: create and publish your repository
+
+GitPublish is included in `vendor/gitpublish/gitpublish` and installs into
+`~/.local/bin/gitpublish`. The installer selects **Git** and **GitHub CLI (`gh`)**
+automatically when GitPublish is selected, including `--import` with just `gitpublish`.
+On Arch the package name is `github-cli`; on Ubuntu/Debian/Fedora it is `gh`.
+To enable uploads, authenticate separately with `gh auth login` (not performed by the bootstrap).
+
+```bash
+./install.sh --profile developer --dry-run
+./install.sh --profile developer
+# One-time GitHub authorization:
+gh auth login
+# From the root of a new project:
+gitpublish --dry-run
+gitpublish --public
+```
+
+By default GitPublish creates a **private** repository. Review `git status` and
+`.gitignore` before publishing; GitPublish asks for confirmation and refuses some
+common secret file patterns. It can initialize Git and create the first commit.
+
+`keyio` is deliberately **not bundled**: Python projects should install it directly
+from `https://github.com/shS83/keyio`, using their own environment, when needed.
 
 ### Bring your own CmdVault
 

@@ -11,6 +11,7 @@ cat > "$TMP/bin/pacman" <<'SCRIPT'
 case $1 in
   -Qq) exit 1;;
   -Si) exit 0;;
+  -S) printf '%s\n' "$*" >> "$LE_TEST_LOG"; exit 0;;
   *) echo 'Unexpected pacman invocation' >&2; exit 1;;
 esac
 SCRIPT
@@ -51,11 +52,15 @@ check grep -q 'cproj' <<< "$summary"
 check grep -q 'cmdvault.*source needed' <<< "$summary"
 check grep -q 'nadar' <<< "$summary"
 check grep -q 'srvpulse' <<< "$summary"
+check grep -q 'gitpublish.*local pending' <<< "$summary"
+check grep -q 'gh' <<< "$summary"
 
 # Only local tool IDs; no attempt to install repository packages.
-printf 'cproj\ncmdvault\nnadar\nsrvpulse\n' > "$TMP/local.list"
+printf 'cproj\ncmdvault\nnadar\nsrvpulse\ngitpublish\n' > "$TMP/local.list"
 dry=$("$ROOT/install.sh" --import "$TMP/local.list" --dry-run --source "cmdvault=$TMP/source cmdvault")
 check grep -q 'Personal install:.*cmdvault' <<< "$dry"
+check grep -q 'Personal install:.*gitpublish' <<< "$dry"
+check grep -q 'Repository install:.*github-cli' <<< "$dry"
 [[ ! -e $HOME/.local/bin/cproj ]] || exit 1
 ((++passes))
 
@@ -65,6 +70,8 @@ check test -x "$HOME/.local/bin/cproj"
 check test -x "$HOME/.local/bin/cmdvault"
 check test -x "$HOME/.local/bin/nadar"
 check test -x "$HOME/.local/bin/srvpulse"
+check test -x "$HOME/.local/bin/gitpublish"
+check cmp "$ROOT/vendor/gitpublish/gitpublish" "$HOME/.local/bin/gitpublish"
 check test -r "$HOME/.config/cproj/cproj.bash"
 check test -r "$HOME/.config/cproj/cproj.conf"
 check test -r "$HOME/.config/nadar/nadar.conf"
@@ -72,8 +79,10 @@ check test -r "$HOME/.config/systemd/user/nadar.service"
 check test -r "$HOME/.config/systemd/user/nadar-remote-watch.timer"
 check test -r "$HOME/.config/srvpulse/config.toml"
 check grep -q 'nadar-remote-watch.timer' "$TMP/actions.log"
+check grep -q 'github-cli' "$TMP/actions.log"
 check grep -q 'source "\$HOME/.config/cproj/cproj.bash"' "$HOME/.bashrc"
 check grep -q 'MOCK-SRVPULSE' <("$HOME/.local/bin/srvpulse")
+check grep -q 'gitpublish' <("$HOME/.local/bin/gitpublish" --help)
 
 # Do not overwrite configs or duplicate shell integration lines.
 printf 'custom=true\n' > "$HOME/.config/cproj/cproj.conf"

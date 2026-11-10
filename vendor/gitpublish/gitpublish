@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# gitpublish - Publish a local project as a new GitHub repository.
+set -Eeuo pipefail
+
+usage() {
+	cat <<'EOF'
+Käyttö: gitpublish [NIMI | OMISTAJA/NIMI] [--private | --public] [--dry-run]
+
+Luo nykyisen hakemiston projektista uuden GitHub-repositorion.
+Oletuksena nimi otetaan hakemistosta ja repo luodaan yksityisenä.
+
+Esimerkkejä:
+  gitpublish
+  gitpublish FireSmokeCPP
+  gitpublish FireSmokeCPP --public
+  gitpublish --dry-run
+EOF
+}
+
+fail() { printf 'Virhe: %s\n' "$*" >&2; exit 1; }
+
+visibility='--private'
+dry_run=false
+repo_name=''
+
+while (($#)); do
+	case "$1" in
+		--public|--private)
+			visibility="$1"
+			;;
+		--dry-run)
+			dry_run=true
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--*)
+			fail "Tuntematon valitsin: $1"
+			;;
+		*)
+			[[ -z "$repo_name" ]] || fail 'Anna vain yksi repositorion nimi.'
+			repo_name="$1"
+			;;
+	esac
+	shift
+done
+
+command -v git >/dev/null 2>&1 || fail 'Git puuttuu PATHista.'
+repo_name="${repo_name:-${PWD##*/}}"
+[[ "$repo_name" =~ ^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)?$ ]] || fail 'Virheellinen repon nimi.'
+
+has_git=false
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	has_git=true
+	repo_root="$(git rev-parse --show-toplevel)"
+	[[ "$(cd "$repo_root" && pwd -P)" == "$(pwd -P)" ]] || fail 'Siirry nykyisen Git-repositorion juureen ennen julkaisua.'
+	[[ -z "$(git remote)" ]] || fail 'Repositoriolla on jo remote. Tarkista `git remote -v` ennen uuden repon luontia.'
+fi
+
+printf 'Projekti:    %s\n' "$(pwd -P)"
+printf 'GitHub-repo: %s\n' "$repo_name"
+printf 'Näkyvyys:    %s\n' "${visibility#--}"
+
+if [[ "$dry_run" == true ]]; then
+	printf '\nDry-run: ei muutoksia eikä verkkokutsuja.\n'
+	if [[ "$has_git" == false ]]; then
+		printf '  git init -b main\n'
+	fi
+	printf '  git add -A\n'
+	printf '  git commit (jos muutoksia)\n'
+	printf '  gh repo create %q %s --source=. --remote=origin --push\n' "$repo_name" "$visibility"
+	exit 0
+fi
+
+command -v gh >/dev/null 2>&1 || fail 'GitHub CLI puuttuu. Asenna gh ja tee gh auth login.'
+gh auth status --hostname github.com >/dev/null 2>&1 || fail 'GitHub-kirjautuminen puuttuu. Suorita gh auth login.'
+
+if [[ "$has_git" == false ]]; then
+	git init -b main || fail 'Git-repositorion alustus epäonnistui.'
+fi
+
+# Also check already tracked files; gitignore does not hide tracked secrets.
+sensitive=()
+while IFS= read -r -d '' file; do
+	base="${file##*/}"
+	case "$base" in
+		.env|.env.*)
+			case "$base" in .env.example|.env.sample|.env.template) continue ;; esac
+			;;
+		id_rsa|id_ed25519|id_ecdsa|*.pem|*.key|*.p12|*.pfx|*.sqlite3|*.db|*credentials*.json|*token*.json)
+			;;
+		*)
+			continue
+			;;
+	esac
+	sensitive+=("$file")
+done < <(git ls-files -c -o --exclude-standard -z)
+
+if ((${#sensitive[@]})); then
+	printf '\nMahdollisesti arkaluonteisia tiedostoja (julkaisu keskeytetty):\n' >&2
+	printf '  %s\n' "${sensitive[@]}" >&2
+	fail 'Siirrä/ignoreeraa tiedostot ensin. Jos tiedosto on jo seurannassa, git rm --cached POLKU.'
+fi
+
+if [[ ! -f .gitignore ]]; then
+	printf '\nHuom: .gitignore puuttuu. Tarkista, ettet julkaise build-tuloksia tai salaisuuksia.\n'
+fi
+
+printf '\nGit-tilanne ennen julkaisua:\n'
+git status --short --untracked-files=all
+printf '\nHUOM: tämä tarkistus ei tunnista kaikkia salaisuuksia.\n'
+read -r -p 'Julkaistaanko yllä olevan projektin tiedostot GitHubiin? [k/E] ' answer
+[[ "$answer" =~ ^[kK]$ ]] || { printf 'Peruttu.\n'; exit 0; }
+
+git add -A
+if ! git diff --cached --quiet; then
+	git commit -m 'Initial publish' || fail 'Commit epäonnistui. Tarkista git config user.name/user.email.'
+fi
+
+git rev-parse --verify HEAD >/dev/null 2>&1 || fail 'Ei yhtään committia julkaistavaksi.'
+
+if ! gh repo create "$repo_name" "$visibility" --source=. --remote=origin --push; then
+	fail 'GitHub-julkaisu epäonnistui. Jos repo ehdittiin luoda, tarkista `git remote -v` ja jatka `git push -u origin HEAD`.'
+fi
+
+printf '\nValmis! GitHub-repo on luotu ja nykyinen haara pushattu.\n'
+gh repo view --json url --jq '.url' || true

@@ -4,18 +4,18 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.2.0'
+readonly VERSION='0.3.0'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
 declare -a TOOLS=(
-  git curl wget openssh rsync unzip zip
+  git gh curl wget openssh rsync unzip zip
   fzf fd ripgrep bat eza lsd yazi
   btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq
   git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace
-  cproj cmdvault nadar srvpulse
+  cproj cmdvault nadar srvpulse gitpublish
 )
-declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse)
+declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish)
 declare -A TOOL_SOURCES=()
 declare -A KNOWN=() SELECTED=() STATUS=() PACKAGE=()
 for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
@@ -81,7 +81,8 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
-  • Bundled: cproj, nadar and srvpulse; cmdvault needs your source code.
+  • Bundled: cproj, nadar, srvpulse and gitpublish; cmdvault needs your source code.
+  • GitPublish requires git, gh and a one-time gh auth login.
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Shell integration and systemd activation are explicit opt-ins.
   • The script never adds package repositories.
@@ -115,7 +116,7 @@ parse_args() {
         local spec=$2 name path
         [[ $spec == *=* ]] || die '--source requires NAME=DIR'
         name=${spec%%=*}; path=${spec#*=}
-        case $name in cproj|cmdvault|nadar|srvpulse) ;; *) die "Unknown personal tool: $name" ;; esac
+        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish) ;; *) die "Unknown personal tool: $name" ;; esac
         [[ -n $path ]] || die '--source requires a nonempty directory or file path'
         TOOL_SOURCES[$name]=$path
         shift 2 ;;
@@ -176,12 +177,13 @@ package_for() {
     pacman:openssh) printf 'openssh' ;;
     dnf:openssh) printf 'openssh-clients' ;;
     pacman:byobu) printf 'AUR:byobu' ;;
+    pacman:gh) printf 'github-cli' ;;
     *) printf '%s' "$id" ;;
   esac
 }
 
 is_personal_tool() {
-  case $1 in cproj|cmdvault|nadar|srvpulse) return 0 ;; *) return 1 ;; esac
+  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish) return 0 ;; *) return 1 ;; esac
 }
 
 personal_source() {
@@ -197,6 +199,7 @@ personal_source() {
   if [[ -d $base ]]; then
     case $id in
       cmdvault) [[ -f $base/cmdvault || -f $base/cmdvault.py || -f $base/pyproject.toml ]] || return 1 ;;
+      gitpublish) [[ -f $base/gitpublish ]] || return 1 ;;
     esac
     printf '%s' "$base"
     return 0
@@ -216,6 +219,7 @@ binary_present() {
     fd) names=(fd fdfind) ;;
     bat) names=(bat batcat) ;;
     git-delta) names=(delta) ;;
+    gh) names=(gh) ;;
     tealdeer) names=(tealdeer tldr) ;;
     *) names=("$id") ;;
   esac
@@ -288,9 +292,9 @@ select_profile() {
     minimal)
       pick='git curl wget unzip zip openssh fzf fd ripgrep bat eza lsd pv jq' ;;
     desktop)
-      pick='git curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse' ;;
+      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish' ;;
     developer)
-      pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse' ;;
+      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish' ;;
     server)
       pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat lsd pv htop ncdu jq tmux byobu lsof nmap strace srvpulse' ;;
     all)
@@ -397,6 +401,15 @@ toggle_tool() {
   local item=$1
   [[ -n ${KNOWN[$item]:-} ]] || { warn "Unknown tool: $item"; return 1; }
   if [[ -n ${SELECTED[$item]:-} ]]; then unset 'SELECTED[$item]'; else SELECTED[$item]=1; fi
+}
+
+resolve_dependencies() {
+  # GitPublish wraps git and the GitHub CLI; ensure both are included even if
+  # gitpublish was selected alone in an imported list.
+  if [[ -n ${SELECTED[gitpublish]:-} ]]; then
+    SELECTED[git]=1
+    SELECTED[gh]=1
+  fi
 }
 
 confirm_install() {
@@ -527,6 +540,13 @@ install_personal_tool() {
       elif (( ENABLE_SERVICES )); then
         warn 'NADAR: no active user systemd manager; units installed but not enabled.'
       fi
+      ;;
+    gitpublish)
+      local file=$src
+      if [[ -d $src ]]; then file="$src/gitpublish"; fi
+      [[ -f $file ]] || { error 'GitPublish source requires a gitpublish script'; return 1; }
+      bash -n "$file" || { error 'GitPublish has invalid Bash syntax'; return 1; }
+      install -Dm755 -- "$file" "$bindir/gitpublish" || return 1
       ;;
     srvpulse|cmdvault)
       if [[ -d $src && -f $src/pyproject.toml ]]; then
@@ -670,9 +690,11 @@ main() {
   elif [[ -n $PROFILE ]]; then select_profile "$PROFILE"
   else prompt_profile
   fi
+  resolve_dependencies
   show_summary
   (( SUMMARY_ONLY )) && return 0
   confirm_install
+  resolve_dependencies
   run_install
 }
 main "$@"

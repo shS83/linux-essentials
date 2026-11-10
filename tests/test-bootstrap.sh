@@ -54,6 +54,16 @@ check grep -q 'AUR:byobu\|AUR install:.*byobu' <<< "$c"
 check test -f "$TMP/catalog.list"
 check grep -q '^git$' "$TMP/catalog.list"
 
+# Selecting GitPublish alone also requests its operating-system dependencies.
+printf 'gitpublish\n' > "$TMP/gitpublish.list"
+gp=$("$INSTALLER" --import "$TMP/gitpublish.list" --dry-run)
+check grep -q 'github-cli' <<< "$gp"
+check grep -q 'Personal install:.*gitpublish' <<< "$gp"
+
+# Keep KEYiO as a separate GitHub dependency, not a Linux Essentials tool.
+if "$INSTALLER" --list | grep -q '^keyio '; then fail 'KEYiO was included by mistake'; fi
+((++passes))
+
 d=$("$INSTALLER" --import "$TMP/catalog.list" --summary)
 check grep -q 'TOOLKIT SUMMARY  \[import\]' <<< "$d"
 
