@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 — 2026-11-10
+
+- Bundled CPROJ v0.2.0: `--pull-all` performs `git pull --ff-only` across clean, tracked Git project roots; `--dry-run` previews without pulling.
+- Prevented CPROJ shell integration from interpreting bulk-pull output as a directory.
+
 ## 0.4.0 — 2026-11-10
 
 - Added `cmedia` to Desktop, Developer, and All profiles and the personal tools catalog.

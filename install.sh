@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.4.0'
+readonly VERSION='0.4.1'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -360,7 +360,7 @@ export_tools() {
 
 show_banner() {
   printf '%b╭─────────────────────────────────────────────────────────╮%b\n' "$C_PURPLE" "$C_RESET"
-  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-20s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
+  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-17s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
   printf '%b╰─────────────────────────────────────────────────────────╯%b\n' "$C_PURPLE" "$C_RESET"
   printf '%b  SYSTEM%b %-18s %bMANAGER%b %s\n' "$C_MUTED" "$C_RESET" "$DISTRO" "$C_MUTED" "$C_RESET" "$PM"
 }

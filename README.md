@@ -1,4 +1,4 @@
-# Linux Essentials Bootstrap v0.4.0
+# Linux Essentials Bootstrap v0.4.1
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
@@ -54,7 +54,7 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 
 | Tool | Executable | Additional files |
 | --- | --- | --- |
-| CPROJ v0.1.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
+| CPROJ v0.2.0 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
 | CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
@@ -164,3 +164,25 @@ All test scripts use fake package managers and isolated temporary HOME directori
 ## License
 
 MIT; see `LICENSE`.
+
+### CPROJ: update all Git projects (v0.2.0)
+
+```bash
+cproj --refresh            # optional: refresh discovered projects
+cproj --pull-all --dry-run # inspect Git projects without network changes
+cproj --pull-all           # git pull --ff-only for every clean tracked project
+```
+
+Projects are read from CPROJ's indexed roots and manually added directories.
+Only Git repository roots are processed, so nested subprojects are not pulled
+twice. Repositories with local modifications or untracked files, a detached
+HEAD, or no upstream branch are skipped. Diverged branches are not merged or
+rebased; `--ff-only` reports an error and continues to the next repository.
+This command does not change the current working directory.
+
+To upgrade just CPROJ from Linux Essentials:
+
+```bash
+printf 'cproj\n' > /tmp/cproj.list
+./install.sh --import /tmp/cproj.list --yes --upgrade-tools
+```

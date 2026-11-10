@@ -4,7 +4,7 @@
 # Source shell/cproj.bash in your shell to actually change directories.
 set -o pipefail
 
-VERSION='0.1.1'
+VERSION='0.2.0'
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cproj"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cproj"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cproj"
@@ -190,6 +190,94 @@ name_match() {
     fi
 }
 
+# Update each distinct Git repository rooted at a discovered CPROJ project.
+# Always fast-forward only; never stash, reset, merge or discard local changes.
+pull_all() {
+    local dry_run=0
+    case ${1:-} in
+        '') (($# == 0)) || die 'Usage: cproj --pull-all [--dry-run]' ;;
+        --dry-run) (($# == 1)) || die 'Usage: cproj --pull-all [--dry-run]'; dry_run=1 ;;
+        *) die 'Usage: cproj --pull-all [--dry-run]' ;;
+    esac
+    command -v git >/dev/null 2>&1 || die 'git is not installed.'
+    validate_config
+    ensure_index
+
+    local p root branch upstream before after result
+    local total=0 updated=0 current=0 skipped=0 failed=0 planned=0
+    local -A seen_repos=()
+    local -a paths=()
+    while IFS= read -r p; do
+        valid_path "$p" && paths+=("$p")
+    done < "$INDEX_FILE"
+
+    printf '\nCPROJ  /  GIT PULL ALL%s\n' "$([[ $dry_run == 1 ]] && printf '  [DRY RUN]' || true)"
+    printf '%s\n' '──────────────────────────────────────────────────'
+
+    for p in "${paths[@]}"; do
+        # An indexed project inside a repository must not pull its parent again.
+        root=$(git -C "$p" rev-parse --show-toplevel 2>/dev/null) || continue
+        root=$(absolute_dir "$root") || continue
+        [[ $p == "$root" ]] || continue
+        [[ -v 'seen_repos[$root]' ]] && continue
+        seen_repos[$root]=1
+        ((++total))
+
+        branch=$(git -C "$p" symbolic-ref --quiet --short HEAD 2>/dev/null) || {
+            printf 'SKIP  %-24s detached HEAD\n' "${p##*/}"
+            ((++skipped)); continue
+        }
+        upstream=$(git -C "$p" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) || {
+            printf 'SKIP  %-24s no tracking upstream (%s)\n' "${p##*/}" "$branch"
+            ((++skipped)); continue
+        }
+        # Git's porcelain output includes untracked files as well as edits.
+        result=$(git -C "$p" status --porcelain=v1 --untracked-files=all 2>/dev/null) || {
+            printf 'FAIL  %-24s cannot inspect worktree\n' "${p##*/}"
+            ((++failed)); continue
+        }
+        if [[ -n $result ]]; then
+            printf 'SKIP  %-24s local changes / untracked files\n' "${p##*/}"
+            ((++skipped)); continue
+        fi
+        if ((dry_run)); then
+            printf 'PLAN  %-24s git pull --ff-only (%s ← %s)\n' "${p##*/}" "$branch" "$upstream"
+            ((++planned)); continue
+        fi
+
+        before=$(git -C "$p" rev-parse HEAD 2>/dev/null) || {
+            printf 'FAIL  %-24s cannot read HEAD\n' "${p##*/}"
+            ((++failed)); continue
+        }
+        # No interactive credential prompts while processing many projects.
+        # Git respects existing SSH agent credentials and configured remotes.
+        if result=$(GIT_TERMINAL_PROMPT=0 git -C "$p" pull --ff-only 2>&1); then
+            after=$(git -C "$p" rev-parse HEAD 2>/dev/null) || after=''
+            if [[ $before == "$after" ]]; then
+                printf 'OK    %-24s already up to date\n' "${p##*/}"
+                ((++current))
+            else
+                printf 'UPD   %-24s %s → %s\n' "${p##*/}" "${before:0:8}" "${after:0:8}"
+                ((++updated))
+            fi
+        else
+            printf 'FAIL  %-24s git pull --ff-only failed\n' "${p##*/}"
+            # Show the cause, but do not stop processing the remaining projects.
+            printf '%s\n' "$result" | sed -n '1,8s/^/      /p'
+            ((++failed))
+        fi
+    done
+
+    printf '%s\n' '──────────────────────────────────────────────────'
+    if ((dry_run)); then
+        printf 'Repos: %s  planned: %s  skipped: %s  errors: %s\n' "$total" "$planned" "$skipped" "$failed"
+    else
+        printf 'Repos: %s  updated: %s  current: %s  skipped: %s  errors: %s\n' \
+            "$total" "$updated" "$current" "$skipped" "$failed"
+    fi
+    ((failed == 0))
+}
+
 project_kind() {
     local p=$1
     if [[ -f "$p/pyproject.toml" ]]; then printf 'Python';
@@ -264,7 +352,7 @@ fzf_picker() {
             printf '\033[38;2;183;150;255m✦\033[0m %-28s\t%s\n' "$name" "$p"
         done | fzf --ansi --delimiter=$'\t' --with-nth=1,2 \
             --height='95%' --min-height=15 --layout=reverse \
-            --border=rounded --border-label=' ◈ CPROJ / PROJECT TELEPORTER v0.1.1 ' \
+            --border=rounded --border-label=' ◈ CPROJ / PROJECT TELEPORTER v0.2.0 ' \
             --prompt='⌁ teleport › ' --pointer='❯' --marker='◆' \
             --header='ENTER teleport  ·  ESC cancel  ·  PREVIEW: Git / README / environment' \
             --preview="$preview_cmd" \
@@ -279,7 +367,7 @@ fzf_picker() {
 
 help() {
     cat <<'HELP'
-CPROJ - Promethean Project Teleporter v0.1.1
+CPROJ - Promethean Project Teleporter v0.2.0
 
 USAGE
   cproj                       Interactive project navigator (fzf)
@@ -289,6 +377,8 @@ USAGE
   cproj --list                List discovered project directories
   cproj --add DIRECTORY       Add a directory manually
   cproj --refresh             Refresh the project index
+  cproj --pull-all            Fast-forward all clean Git projects
+  cproj --pull-all --dry-run  Preview which projects would be pulled
   cproj --config              Show the configuration file path
   cproj --help                Show help
   cproj --version             Show version
@@ -302,6 +392,11 @@ CONFIGURATION
   CPROJ_MAX_DEPTH=5
   CPROJ_CACHE_TTL=3600
   CPROJ_AUTO_VENV=1     # Activate .venv when changing projects (0=disabled)
+
+PULL ALL
+  Processes indexed Git repository roots only; ignores nested project paths.
+  Skips detached HEAD, missing upstream, and dirty worktrees.
+  Uses git pull --ff-only and continues on individual failures.
 
 IMPORTANT
   The executable returns the selected directory on stdout. To actually
@@ -317,6 +412,7 @@ main() {
         --version|-V) printf '%s\n' "$VERSION" ;;
         --list) validate_config; print_index ;;
         --refresh) refresh_index ;;
+        --pull-all) shift; pull_all "$@" ;;
         --add) shift; add_manual "$@" ;;
         --config) printf '%s\n' "$CONFIG_FILE" ;;
         --record) shift; record_recent "$@" ;;
