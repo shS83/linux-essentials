@@ -81,8 +81,12 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
+<<<<<<< HEAD
   • Bundled: cproj, nadar, srvpulse and gitpublish; cmdvault needs your source code.
   • GitPublish requires git, gh and a one-time gh auth login.
+=======
+  • Bundled: cproj, cmdvault, nadar and srvpulse.
+>>>>>>> 9a2a42643e463cabc0fe81f5b1cecb8ae58b91ad
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Shell integration and systemd activation are explicit opt-ins.
   • The script never adds package repositories.
@@ -549,7 +553,10 @@ install_personal_tool() {
       install -Dm755 -- "$file" "$bindir/gitpublish" || return 1
       ;;
     srvpulse|cmdvault)
-      if [[ -d $src && -f $src/pyproject.toml ]]; then
+      # CmdVault upstream ships a standalone executable alongside metadata-only
+      # pyproject.toml (no packaged CLI entry point). Prefer that executable.
+      if [[ -d $src && -f $src/pyproject.toml ]] &&
+         ! [[ $id == cmdvault && ( -f $src/cmdvault || -f $src/cmdvault.py ) ]]; then
         install_python_tool "$id" "$src" || return 1
       elif [[ $id == cmdvault ]]; then
         local file=$src
