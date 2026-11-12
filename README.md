@@ -215,3 +215,5 @@ printf 'dotfiles-sync\n' > /tmp/dotfiles-sync.list
 The timer is enabled only with `--enable-services`; otherwise its systemd
 unit files are installed but left inactive. Use `--upgrade-tools` to reinstall
 updated bundled files.
+
+The bundled `dotfiles-sync` files can be refreshed from `~/Code/dotfiles-sync`. An optional `.dotfiles-sync` default manifest is installed only when `~/.dotfiles-sync` does not exist; existing selections are preserved. Enable only `dotfiles-sync.timer` via `--enable-services` because the timer starts the service on schedule.

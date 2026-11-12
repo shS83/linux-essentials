@@ -14,7 +14,7 @@ echo "==> Installing dotfiles-sync"
 sudo install -Dm755 "$SRC_DIR/dotfiles-sync" /Tools/dotfiles-sync
 install -Dm644 "$SRC_DIR/dotfiles-sync.service" "$SYSTEMD_DIR/dotfiles-sync.service"
 install -Dm644 "$SRC_DIR/dotfiles-sync.timer" "$SYSTEMD_DIR/dotfiles-sync.timer"
-
+[[ ! -f "~/.dotfiles-sync" ]] && install -Dm644 "$SRC_DIR/.dotfiles-sync" "~/.dotfiles-sync" 
 # Use HOME as the worktree without putting .git inside HOME.
 if [[ ! -d "$REPO" ]]; then
 	git init --bare --initial-branch=main "$REPO"

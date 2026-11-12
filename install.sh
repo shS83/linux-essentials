@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.4.2'
+readonly VERSION='0.4.3'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -669,7 +669,7 @@ install_personal_tool() {
         error 'dotfiles-sync source must contain dotfiles-sync, dotfiles-sync.service and dotfiles-sync.timer'; return 1;
       }
       bash -n "$src/dotfiles-sync" || { error 'dotfiles-sync has invalid Bash syntax'; return 1; }
-      # Match its existing /Tools installation path, not ~/.local/bin.
+      # Keep the canonical executable path used by dotfiles-sync.service.
       if [[ -d /Tools && -w /Tools ]]; then
         install -Dm755 -- "$src/dotfiles-sync" /Tools/dotfiles-sync || return 1
       else
@@ -678,12 +678,17 @@ install_personal_tool() {
       fi
       install -Dm644 -- "$src/dotfiles-sync.service" "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
       install -Dm644 -- "$src/dotfiles-sync.timer" "$HOME/.config/systemd/user/dotfiles-sync.timer" || return 1
+      # Optional default manifest: never overwrite machine-specific selections.
+      if [[ -f $src/.dotfiles-sync && ! -e $HOME/.dotfiles-sync ]]; then
+        install -m644 -- "$src/.dotfiles-sync" "$HOME/.dotfiles-sync" || return 1
+        info 'Installed default ~/.dotfiles-sync'
+      fi
       dotfiles_sync_setup || return 1
       if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
         systemctl --user daemon-reload || warn 'dotfiles-sync: could not reload user systemd'
         if (( ENABLE_SERVICES )); then
+          # Timer activates the service on schedule; separate enablement is unnecessary.
           systemctl --user enable --now dotfiles-sync.timer || return 1
-          systemctl --user enable --now dotfiles-sync.service || return 1
         fi
       elif (( ENABLE_SERVICES )); then
         warn 'dotfiles-sync: no user systemd manager; timer installed but not enabled'
