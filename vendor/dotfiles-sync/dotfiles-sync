@@ -1,0 +1,10 @@
+#!/bin/bash
+echo $HOSTNAME
+pvm=$(date +%d%m%Y_%H%M)
+cd ~
+for file in $(cat ~/.dotfiles-sync)
+do
+[[ -f "$file" ]] && git add "${file}"
+done
+git commit -m "Auto-sync @ $HOSTNAME -- ${pvm}"
+git push

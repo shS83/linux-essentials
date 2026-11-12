@@ -1,0 +1,13 @@
+[Unit]
+Description=Dotfiles sync
+
+[Service]
+Type=simple
+ExecStart=/Tools/dotfiles-sync
+Restart=on-failure
+RestartSec=5
+Environment=
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

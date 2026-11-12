@@ -1,0 +1,11 @@
+[Unit]
+Description=dotfiles-sync twice a day
+
+[Timer]
+OnCalendar=*-*-* 08,20:00:00 Europe/Helsinki
+Persistent=true
+AccuracySec=1min
+Unit=dotfiles-sync.service
+
+[Install]
+WantedBy=timers.target

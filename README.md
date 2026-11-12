@@ -186,3 +186,32 @@ To upgrade just CPROJ from Linux Essentials:
 printf 'cproj\n' > /tmp/cproj.list
 ./install.sh --import /tmp/cproj.list --yes --upgrade-tools
 ```
+
+### dotfiles-sync: machine-specific dotfiles backup
+
+`dotfiles-sync` is bundled under `vendor/dotfiles-sync/` and included in the
+Desktop, Developer and All profiles. It installs the executable into
+`/Tools/dotfiles-sync` and user units into `~/.config/systemd/user/`.
+
+The installer initializes a bare repository at
+`~/.dotfiles-sync-${HOSTNAME}.git` using `$HOME` as its work tree and sets
+`status.showUntrackedFiles=no`. All new paths are ignored by default to prevent
+accidental publication of SSH keys, tokens, and other private HOME files.
+Track chosen files explicitly with `git --git-dir=... --work-tree="$HOME" add -f PATH`.
+
+If `gh` is authenticated, the bootstrap checks for a matching private GitHub
+repository, creates it only if missing, and publishes an empty initial commit.
+It does *not* automatically upload the contents of `$HOME`. An authentication
+or network failure does not trigger a duplicate repository creation.
+
+```bash
+./install.sh --profile developer --dry-run
+./install.sh --profile developer --yes --enable-services
+# Or install this tool alone:
+printf 'dotfiles-sync\n' > /tmp/dotfiles-sync.list
+./install.sh --import /tmp/dotfiles-sync.list --yes --enable-services
+```
+
+The timer is enabled only with `--enable-services`; otherwise its systemd
+unit files are installed but left inactive. Use `--upgrade-tools` to reinstall
+updated bundled files.

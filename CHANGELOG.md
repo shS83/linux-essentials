@@ -1,3 +1,10 @@
+## 0.4.2 — dotfiles-sync
+
+- Add dotfiles-sync to Desktop, Developer and All profiles.
+- Bundle its executable and systemd user units under vendor/.
+- Set up a machine-specific bare Git repository and optional private GitHub publication.
+- Keep systemd timer enablement opt-in via --enable-services.
+
 # Changelog
 
 ## 0.4.1 — 2026-11-10

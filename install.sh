@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.4.1'
+readonly VERSION='0.4.2'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -13,10 +13,10 @@ declare -a TOOLS=(
   fzf fd ripgrep bat eza lsd yazi
   btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq
   git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace
-  cproj cmdvault nadar srvpulse gitpublish cmedia
+  cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync
   uv chafa ffmpeg python3
 )
-declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia)
+declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync)
 declare -A TOOL_SOURCES=()
 declare -A KNOWN=() SELECTED=() STATUS=() PACKAGE=()
 for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
@@ -75,7 +75,7 @@ Options:
       --source NAME=DIR   Use a local project directory/file for a personal tool
       --upgrade-tools     Reinstall selected personal tools even if present
       --shell-integration  Add the CPROJ source line to ~/.bashrc (opt-in)
-      --enable-services   Enable/start NADAR user systemd units (opt-in)
+      --enable-services   Enable/start NADAR and dotfiles-sync user units (opt-in)
   -h, --help              Show this help
 
 Notes:
@@ -87,6 +87,7 @@ Notes:
   • CmdVault still needs your source. Cmedia clones GitHub if no local checkout exists.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
+  • dotfiles-sync installs into /Tools, with opt-in --enable-services timer.
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Cmedia installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
@@ -121,7 +122,7 @@ parse_args() {
         local spec=$2 name path
         [[ $spec == *=* ]] || die '--source requires NAME=DIR'
         name=${spec%%=*}; path=${spec#*=}
-        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia) ;; *) die "Unknown personal tool: $name" ;; esac
+        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync) ;; *) die "Unknown personal tool: $name" ;; esac
         [[ -n $path ]] || die '--source requires a nonempty directory or file path'
         TOOL_SOURCES[$name]=$path
         shift 2 ;;
@@ -188,7 +189,7 @@ package_for() {
 }
 
 is_personal_tool() {
-  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia) return 0 ;; *) return 1 ;; esac
+  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync) return 0 ;; *) return 1 ;; esac
 }
 
 personal_source() {
@@ -214,6 +215,7 @@ personal_source() {
     case $id in
       cmdvault) [[ -f $base/cmdvault || -f $base/cmdvault.py || -f $base/pyproject.toml ]] || return 1 ;;
       gitpublish) [[ -f $base/gitpublish ]] || return 1 ;;
+      dotfiles-sync) [[ -f $base/dotfiles-sync && -f $base/dotfiles-sync.service && -f $base/dotfiles-sync.timer ]] || return 1 ;;
       cmedia) [[ -f $base/install.sh && -f $base/patch_cmedia.py ]] || return 1 ;;
     esac
     printf '%s' "$base"
@@ -269,7 +271,7 @@ status_for() {
   if is_personal_tool "$id"; then
     # Personal tools are managed in ~/.local/bin even if an older copy
     # happens to be installed somewhere else on PATH.
-    if [[ -x "$HOME/.local/bin/$id" ]]; then
+    if [[ $id == dotfiles-sync && -x /Tools/dotfiles-sync ]] || [[ -x "$HOME/.local/bin/$id" ]]; then
       printf 'installed'
     elif personal_source "$id" >/dev/null; then
       printf 'local pending'
@@ -307,9 +309,9 @@ select_profile() {
     minimal)
       pick='git curl wget unzip zip openssh fzf fd ripgrep bat eza lsd pv jq' ;;
     desktop)
-      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia' ;;
+      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync' ;;
     developer)
-      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia' ;;
+      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync' ;;
     server)
       pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat lsd pv htop ncdu jq tmux byobu lsof nmap strace srvpulse' ;;
     all)
@@ -425,6 +427,10 @@ resolve_dependencies() {
     SELECTED[git]=1
     SELECTED[gh]=1
   fi
+  if [[ -n ${SELECTED[dotfiles-sync]:-} ]]; then
+    SELECTED[git]=1
+    SELECTED[gh]=1
+  fi
   if [[ -n ${SELECTED[cmedia]:-} ]]; then
     SELECTED[git]=1
     SELECTED[uv]=1
@@ -519,6 +525,84 @@ make_debian_aliases() {
 
 # Local/personal tool installation never needs root. Bundled sources are versioned
 # within this repository; custom sources must be explicitly supplied by the user.
+# Set up the bare Git repository for this machine. Never stage all of HOME.
+dotfiles_sync_setup() {
+  local machine=${HOSTNAME:-} repo exclude_file
+  if [[ -z $machine && -r /proc/sys/kernel/hostname ]]; then
+    IFS= read -r machine < /proc/sys/kernel/hostname || true
+  fi
+  [[ -n $machine ]] || { error 'Cannot determine hostname for dotfiles-sync'; return 1; }
+  machine=${machine%%.*}
+  repo="$HOME/.dotfiles-sync-${machine}.git"
+  if [[ ! -e $repo ]]; then
+    git init --bare --initial-branch=main "$repo" || return 1
+    info "Created dotfiles repository: $repo"
+  elif [[ $(git --git-dir="$repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
+    error "Not a bare Git repository: $repo"
+    return 1
+  fi
+  git --git-dir="$repo" config status.showUntrackedFiles no || return 1
+  exclude_file="$repo/info/exclude"
+  if ! grep -Fxq '/*' "$exclude_file" 2>/dev/null; then
+    printf '\n# dotfiles-sync: do not automatically add all of HOME\n/*\n' >> "$exclude_file" || return 1
+  fi
+  dotfiles_sync_publish "$repo" "$machine"
+}
+
+# Create a private GitHub repository when absent; never upload untracked HOME files.
+dotfiles_sync_publish() {
+  local repo=$1 machine=$2 owner repo_name response remote current branch name email created=0
+  repo_name="dotfiles-sync-${machine}"
+  if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+    warn 'dotfiles-sync: gh is unavailable or unauthenticated; GitHub publication skipped'
+    return 0
+  fi
+  owner=$(gh api user --jq '.login' 2>/dev/null) || {
+    warn 'dotfiles-sync: could not determine GitHub user'; return 0;
+  }
+  [[ -n $owner ]] || { warn 'dotfiles-sync: empty GitHub username'; return 0; }
+  remote="git@github.com:${owner}/${repo_name}.git"
+  if current=$(git --git-dir="$repo" remote get-url origin 2>/dev/null); then
+    if [[ $current != "$remote" ]]; then
+      warn "dotfiles-sync: origin already points to $current; leaving it unchanged"
+      return 0
+    fi
+  fi
+  if response=$(gh api -i "repos/${owner}/${repo_name}" 2>&1); then
+    info "GitHub repository exists: $owner/$repo_name"
+  elif [[ $response =~ HTTP/[0-9.]+[[:space:]]+404 ]]; then
+    info "Creating private GitHub repository: $owner/$repo_name"
+    if ! gh repo create "$owner/$repo_name" --private \
+        --description "Dotfiles backup for $machine"; then
+      warn 'dotfiles-sync: GitHub repository creation failed'
+      return 0
+    fi
+    created=1
+  else
+    warn 'dotfiles-sync: GitHub check failed (not treating it as 404)'
+    return 0
+  fi
+  if ! git --git-dir="$repo" remote get-url origin >/dev/null 2>&1; then
+    git --git-dir="$repo" remote add origin "$remote" || return 1
+  fi
+  # Only newly created repos get an automatic initial commit and push.
+  if (( created )); then
+    if ! git --git-dir="$repo" rev-parse --verify HEAD >/dev/null 2>&1; then
+      name=$(git config user.name || :)
+      email=$(git config user.email || :)
+      [[ -n $name ]] || name=$owner
+      [[ -n $email ]] || email="${owner}@users.noreply.github.com"
+      git -c user.name="$name" -c user.email="$email" \
+          -c commit.gpgsign=false --git-dir="$repo" --work-tree="$HOME" \
+          commit --allow-empty -m "Initialize $repo_name" || return 1
+    fi
+    branch=$(git --git-dir="$repo" symbolic-ref --quiet --short HEAD) || return 1
+    if ! git --git-dir="$repo" push -u origin "$branch"; then
+      warn 'dotfiles-sync: GitHub repository created but initial push failed'
+    fi
+  fi
+}
+
 install_personal_tool() {
   local id=$1 src=$2 bindir="$HOME/.local/bin"
   mkdir -p -- "$bindir" || return 1
@@ -578,6 +662,31 @@ install_personal_tool() {
           error 'Cmedia source must contain src/cmedia/app.py and pyproject.toml'; return 1;
         }
         bash "$cmedia_installer" "$src" || return 1
+      fi
+      ;;
+    dotfiles-sync)
+      [[ -d $src && -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
+        error 'dotfiles-sync source must contain dotfiles-sync, dotfiles-sync.service and dotfiles-sync.timer'; return 1;
+      }
+      bash -n "$src/dotfiles-sync" || { error 'dotfiles-sync has invalid Bash syntax'; return 1; }
+      # Match its existing /Tools installation path, not ~/.local/bin.
+      if [[ -d /Tools && -w /Tools ]]; then
+        install -Dm755 -- "$src/dotfiles-sync" /Tools/dotfiles-sync || return 1
+      else
+        sudo_prefix
+        "${ROOT_CMD[@]}" install -Dm755 -- "$src/dotfiles-sync" /Tools/dotfiles-sync || return 1
+      fi
+      install -Dm644 -- "$src/dotfiles-sync.service" "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
+      install -Dm644 -- "$src/dotfiles-sync.timer" "$HOME/.config/systemd/user/dotfiles-sync.timer" || return 1
+      dotfiles_sync_setup || return 1
+      if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+        systemctl --user daemon-reload || warn 'dotfiles-sync: could not reload user systemd'
+        if (( ENABLE_SERVICES )); then
+          systemctl --user enable --now dotfiles-sync.timer || return 1
+          systemctl --user enable --now dotfiles-sync.service || return 1
+        fi
+      elif (( ENABLE_SERVICES )); then
+        warn 'dotfiles-sync: no user systemd manager; timer installed but not enabled'
       fi
       ;;
     gitpublish)
@@ -694,7 +803,7 @@ run_install() {
   for tool in "${PERSONAL_TOOLS[@]}"; do
     [[ -n ${SELECTED[$tool]:-} ]] || continue
     if [[ ${STATUS[$tool]} == installed && $UPGRADE_TOOLS != 1 ]] && \
-       ! { [[ $tool == cproj && $SHELL_INTEGRATION == 1 ]] || [[ $tool == nadar && $ENABLE_SERVICES == 1 ]]; }; then
+       ! { [[ $tool == cproj && $SHELL_INTEGRATION == 1 ]] || [[ $tool == nadar && $ENABLE_SERVICES == 1 ]] || [[ $tool == dotfiles-sync && $ENABLE_SERVICES == 1 ]]; }; then
       continue
     fi
     if ! source=$(personal_source "$tool"); then
