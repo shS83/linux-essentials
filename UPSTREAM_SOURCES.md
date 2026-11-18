@@ -24,3 +24,11 @@ outside `vendor/clipvault/` may be older than the branch heads above;
 
 Do not run this bootstrap as root, and review source changes and commit history
 before rolling out latest versions across important computers.
+
+### Version 0.5.1 verification
+
+CmdVault PNG: Git blob `8cd4b766f396b2621de73e9d3f1aeb0d44b77d2b`,
+source `https://github.com/shS83/cmdvault/blob/root/cmdvault.png`.
+The package includes this exact PNG offline. Cmedia V2 differential patch is
+from `cmedia-differential-v2.zip` created on 2026-11-18; it patches the GitHub
+root branch without modifying media decoding or playback.

@@ -1,11 +1,12 @@
-# Bring your own CmdVault source
+# CmdVault resource and upstream source
 
-CmdVault was mentioned as an existing personal tool, but no CmdVault source
-code is present in the conversation artifacts. The installer therefore
-requires its existing source and does not generate a fake replacement.
+`cmdvault.png` is bundled **byte for byte** from shS83/cmdvault/root
+(Git blob SHA1: `8cd4b766f396b2621de73e9d3f1aeb0d44b77d2b`).
+This is the Kitty logo used by upstream CmdVault.
 
-Place `cmdvault`, `cmdvault.py`, or a Python project with `pyproject.toml`
-under this directory, or use `--source cmdvault=/path/to/project`.
-
-Do not put secrets or `.venv` directories into Git. Review your source before
-publishing the repository.
+The rest of CmdVault is installed from a full checkout (`~/Code/cmdvault`),
+from `--source cmdvault=...`, or from the GitHub root branch when no local
+source is available. The installer uses upstream's install.sh to install
+all visuals, security and sync modules, avoiding the broken standalone binary.
+If a local checkout has no cmdvault.png, it is staged into a temporary
+copy with this exact asset so the source checkout stays untouched.

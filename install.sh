@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.5.0'
+readonly VERSION='0.5.1'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -88,14 +88,14 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
-  • Bundled: CPROJ, NADAR, SRVPULSE, GitPublish, cmedia patch and Clipvault GUI overlay.
-  • For current CmdVault, use --latest or --source cmdvault=~/Code/cmdvault.
+  • Bundled: CPROJ, NADAR, SRVPULSE, GitPublish, Cmedia V2 renderer, Clipvault GUI, and CmdVault logo.
+  • CmdVault full sources come from ~/Code/cmdvault or GitHub; its exact logo is bundled.
   • Clipvault requires a graphical session, PostgreSQL and Python >=3.15 via uv.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
   • dotfiles-sync installs a user-local launcher and optionally /Tools integration.
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
-  • Cmedia installs its launcher via uv tool into ~/.local/bin/cmedia.
+  • Cmedia V2 installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
   • The script never adds package repositories.
 EOF
@@ -213,6 +213,15 @@ personal_source() {
   if [[ $id == cmedia ]]; then
     for candidate in "$HOME/Code/cmedia" "/Tools/cmedia"; do
       if [[ -f $candidate/src/cmedia/app.py && -f $candidate/pyproject.toml ]]; then
+        printf '%s' "$candidate"; return 0
+      fi
+    done
+  fi
+  # CmdVault is a full package with src/ modules and a Kitty logo; prefer
+  # the user's own checkout before the vendor directory (which only has art).
+  if [[ $id == cmdvault ]]; then
+    for candidate in "$HOME/Code/cmdvault" "/Tools/cmdvault"; do
+      if [[ -f $candidate/cmdvault && -f $candidate/install.sh && -f $candidate/src/visuals/picker.py ]]; then
         printf '%s' "$candidate"; return 0
       fi
     done
@@ -586,10 +595,12 @@ source_for_install() {
     personal_source "$id"
   elif (( LATEST )); then
     fetch_latest_personal_source "$id"
-  elif [[ $id == clipvault ]]; then
+  elif [[ $id == clipvault || $id == cmdvault ]]; then
     local source
-    source=$(personal_source "$id") || return 1
-    if [[ $source == "$SCRIPT_DIR/vendor/clipvault" && ! -f $source/database.py ]]; then
+    if ! source=$(personal_source "$id"); then
+      fetch_latest_personal_source "$id"
+    elif [[ $id == clipvault && $source == "$SCRIPT_DIR/vendor/clipvault" && ! -f $source/database.py ]] || \
+         [[ $id == cmdvault && $source == "$SCRIPT_DIR/vendor/cmdvault" && ! -f $source/cmdvault ]]; then
       fetch_latest_personal_source "$id"
     else
       printf '%s' "$source"
@@ -717,9 +728,31 @@ install_personal_tool() {
       ;;
     srvpulse|cmdvault)
       if [[ $id == cmdvault && -f $src/install.sh && -f $src/src/visuals/picker.py && -f $src/cmdvault ]]; then
-        # CmdVault's package uses adjacent src/ modules and a Kitty logo;
-        # installing a single script breaks its imports and graphics.
-        bash "$src/install.sh" || return 1
+        # Do not use a single-script install: the complete CmdVault app is needed.
+        # If an older checkout has no logo, stage a temporary copy with the
+        # verified GitHub PNG bundled under vendor/cmdvault. Never touch ~/Code.
+        local cmd_source="$src" staged_cmdvault=''
+        if [[ ! -s $src/cmdvault.png ]]; then
+          staged_cmdvault=$(mktemp -d "${TMPDIR:-/tmp}/cmdvault-install.XXXXXXXX") || return 1
+          if ! (cd -- "$src" && tar --exclude='./.git' --exclude='./.venv' \
+                    --exclude='./__pycache__' -cf - .) | tar -xf - -C "$staged_cmdvault"; then
+            rm -rf -- "$staged_cmdvault"; error 'CmdVault staging failed'; return 1
+          fi
+          install -Dm644 -- "$SCRIPT_DIR/vendor/cmdvault/cmdvault.png" "$staged_cmdvault/cmdvault.png" || {
+            rm -rf -- "$staged_cmdvault"; return 1;
+          }
+          cmd_source="$staged_cmdvault"
+          info 'CmdVault: restored missing logo from the bundled verified PNG'
+        fi
+        local cmd_status=0
+        bash "$cmd_source/install.sh" || cmd_status=$?
+        [[ -z $staged_cmdvault ]] || rm -rf -- "$staged_cmdvault"
+        (( cmd_status == 0 )) || return "$cmd_status"
+        # Installer uses the original repository's PNG when available and
+        # falls back to the bundled byte-for-byte GitHub asset otherwise.
+        [[ -s ${XDG_DATA_HOME:-$HOME/.local/share}/cmdvault/app/cmdvault.png ]] || {
+          error 'CmdVault installation completed without cmdvault.png'; return 1;
+        }
       elif [[ -d $src && -f $src/pyproject.toml ]]; then
         install_python_tool "$id" "$src" || return 1
       elif [[ $id == cmdvault ]]; then

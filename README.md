@@ -58,7 +58,7 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 | CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
-| Cmedia | `~/.local/bin/cmedia` | Bundled anti-flicker patch & installer; requires upstream source, `uv`, `git`, `python3`, `chafa` and `ffmpeg` |
+| Cmedia | `~/.local/bin/cmedia` | Bundled V2 incremental renderer patch & installer; requires upstream source, `uv`, `git`, `python3`, `chafa` and `ffmpeg` |
 | SRVPULSE v0.1.0 | `~/.local/bin/srvpulse` | Python environment `~/.local/share/linux-essentials/venvs/srvpulse/` and `~/.config/srvpulse/config.toml` |
 
 The package *bundles source code* for CPROJ, NADAR, GitPublish and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For SRVPULSE/CmdVault Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. Cmedia specifically uses `uv tool install` and its upstream project requires Python 3.13+. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
@@ -82,7 +82,7 @@ printf 'cmedia\n' > /tmp/cmedia-tools.list
 cmedia ~/Pictures
 ```
 
-The patch changes **only the file-list selection bars** to update the affected terminal rows instead of clearing the whole screen after ↑/↓. The image/preview rendering implementation is left intact. The patch writes `src/cmedia/app.py.bak` once if it modifies your checkout, and refuses unknown upstream code layouts. Changes to an existing checkout should be inspected with `git diff` and committed/pushed separately if desired. For upgrades, use `--upgrade-tools` to overwrite an already installed command.
+The V2 patch updates **only changed file-list rows, status text and preview details** instead of clearing the whole screen after ↑/↓; one keyboard event is sent in a single write. The image/preview rendering implementation is left intact. The V2 patch writes `src/cmedia/app.py.before-diff-v2.bak` once if it modifies your checkout, and refuses unknown upstream code layouts. Changes to an existing checkout should be inspected with `git diff` and committed/pushed separately if desired. For upgrades, use `--upgrade-tools` to overwrite an already installed command.
 
 **Dependency note:** `uv` must be available (some Debian/Ubuntu repositories may not package it), and the upstream project requires Python >=3.13. `uv` can obtain the required Python runtime when configured to download Python. `chafa` and `ffmpeg` also need to be installed for the media preview functionality. The patch itself is bundled, so a local-source install does not download patch code.
 
@@ -111,21 +111,24 @@ common secret file patterns. It can initialize Git and create the first commit.
 `keyio` is deliberately **not bundled**: Python projects should install it directly
 from `https://github.com/shS83/keyio`, using their own environment, when needed.
 
-### Bring your own CmdVault
+### CmdVault – bundled official logo, full source installation
 
-The previous versions of the toolkit did not include CmdVault's source code, so this release does **not** silently replace it with a dummy application. Choose either of these methods:
+The **exact GitHub `cmdvault.png`** is bundled with this release, but the
+full CmdVault source tree is not shipped offline. The installer prefers
+`~/Code/cmdvault`, then fetches `shS83/cmdvault` from GitHub when needed.
+It installs all the app's visuals and sync modules via upstream `install.sh`.
+You can also select a source explicitly:
 
 ```bash
 # Install from an existing CmdVault checkout or script
 ./install.sh --profile developer --source cmdvault="$HOME/Code/cmdvault"
 
-# Or bundle your own code in the Git repository (git commit it yourself)
-mkdir -p vendor/cmdvault
-cp /path/to/your/cmdvault.py vendor/cmdvault/cmdvault.py
-./install.sh --profile developer
+# Update only CmdVault (existing local source is used, otherwise GitHub)
+printf 'cmdvault\n' > /tmp/le-cmdvault.list
+./install.sh --import /tmp/le-cmdvault.list --yes --upgrade-tools
 ```
 
-`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. When no source is available, the Summary reports **source needed** and the installer reports the skipped personal tool explicitly (it does not invent a working app). If you have already installed CmdVault, it is treated as installed.
+`--source cmdvault=PATH` accepts a standalone Bash/Python executable, or a directory containing `cmdvault`, `cmdvault.py` or a Python `pyproject.toml`. If no full local source is available, the installer fetches the CmdVault repository from GitHub (network required); `vendor/cmdvault/cmdvault.png` is included offline and used as a fallback for missing logos (it does not invent a working app). If CmdVault is already installed, use `--upgrade-tools` to reinstall and restore the PNG.
 
 ### Optional integration (requires approval)
 
@@ -248,3 +251,22 @@ after verifying your dotfiles setup.
 include `.bash_history`, because terminal history may contain private tokens.
 If you already have `~/.dotfiles-sync`, the installer preserves it. Review
 its tracked files and Git remotes before enabling the timer.
+
+## v0.5.1 – CmdVault logo and Cmedia V2
+
+- The exact current CmdVault logo is **included** in `vendor/cmdvault/cmdvault.png`.
+  Git blob SHA1: `8cd4b766f396b2621de73e9d3f1aeb0d44b77d2b`.
+  A complete CmdVault checkout is still needed and is fetched from GitHub when
+  not found locally. The official CmdVault installer installs the PNG into
+  `~/.local/share/cmdvault/app/cmdvault.png`.
+- The bundled `vendor/cmedia/patch_cmedia.py` and its installer are now V2,
+  replacing V1. This avoids redrawing backgrounds/frames on each navigation.
+- Refresh just these tools with:
+
+  ```bash
+  printf 'cmdvault\ncmedia\n' > /tmp/le-update.list
+  ./install.sh --import /tmp/le-update.list --upgrade-tools --yes
+  ```
+
+  The installer prefers `~/Code/` checkouts; `--latest` retrieves a fresh
+  temporary checkout, never `git pull` in your working directory.

@@ -44,35 +44,11 @@ version = "0.1.0"
 [project.scripts]
 cmedia = "cmedia:main"
 TOML
-cat > "$TMP/project cmedia/src/cmedia/app.py" <<'PY'
-from pathlib import Path
-ESC = "\033"
-def safe_text(s): return s
-class Terminal:
-    def size(self): return (100, 30)
-    def write(self, s): pass
-    def screen(self, title: str, hint: str) -> tuple[int, int]:
-        width, height = self.size()
-        self.write(f'{ESC}[2J{title}{hint}')
-        return width, height
-    def park(self): pass
-    def image(self, data, row, col): pass
-class PreviewCache:
-    def get(self, *args): return ([], None)
-def media_kind(_item): return None
-def box(*args): pass
-def draw_browser(term: Terminal, directory: Path, paths: list[Path], index: int,
-                 format_: str, cache: PreviewCache, video_window: bool = False, message: str = '') -> None:
-    term.screen(str(directory), message)
-KITTY_PACKET = None
-def directory_dialog(term: Terminal, directory: Path) -> Path | None:
-    """Read an absolute path or a path relative to the current directory."""
-    return directory
-def present_frame(term: Terminal, path: Path, frame: bytes, format_: str, hint: str,
-                  _other: int = 0) -> None:
-    """Keep the old frame visible until the complete replacement is ready."""
-    term.screen(str(path), hint)
-PY
+{
+  printf 'from __future__ import annotations\n'
+  cat "$ROOT/vendor/cmedia/tests/fixture_v1_draw.txt"
+  printf '\nKITTY_PACKET = None\n'
+} > "$TMP/project cmedia/src/cmedia/app.py"
 
 export PATH="$TMP/bin:$PATH" HOME="$TMP/home" LE_OS_RELEASE="$TMP/os-release" NO_COLOR=1
 export LE_TEST_SOURCE="$TMP/project cmedia" LE_TEST_GIT_LOG="$TMP/git.log"
@@ -93,14 +69,14 @@ check grep -q 'cmedia' <<< "$out"
 "$ROOT/install.sh" --import "$TMP/only-cmedia.list" --yes --source "cmedia=$TMP/project cmedia" > "$TMP/install.out"
 check test -x "$HOME/.local/bin/cmedia"
 check grep -q 'MOCK-CMEDIA' <("$HOME/.local/bin/cmedia")
-check grep -q 'CMEDIA_DIFF_RENDER_V1' "$TMP/project cmedia/src/cmedia/app.py"
-check test -f "$TMP/project cmedia/src/cmedia/app.py.bak"
-check grep -q '2J' "$TMP/project cmedia/src/cmedia/app.py.bak"
+check grep -q 'CMEDIA_DIFF_RENDER_V2' "$TMP/project cmedia/src/cmedia/app.py"
+check test -f "$TMP/project cmedia/src/cmedia/app.py.before-diff-v2.bak"
+check grep -q 'CMEDIA_DIFF_RENDER_V1' "$TMP/project cmedia/src/cmedia/app.py.before-diff-v2.bak"
 check python3 -m py_compile "$TMP/project cmedia/src/cmedia/app.py"
 
 "$ROOT/install.sh" --import "$TMP/only-cmedia.list" --yes --upgrade-tools \
   --source "cmedia=$TMP/project cmedia" > "$TMP/upgrade.out"
-check grep -q 'jo asennettu' "$TMP/upgrade.out"
+check grep -q 'jo käytössä' "$TMP/upgrade.out"
 
 # Without an explicit or conventional local source, fetch upstream into temp.
 rm -f "$HOME/.local/bin/cmedia"

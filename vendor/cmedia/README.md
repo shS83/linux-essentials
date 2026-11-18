@@ -1,44 +1,88 @@
-# cmedia — differentiaalinen selainpiirto + käyttäjäasennus
+# Cmedia — differentiaalinen piirtokorjaus v2
 
-Tämä **ei ole koko cmedia-lähdekoodi**, vaan shS83/cmedia-projektin `root`-haaraan kohdistettu automaattinen korjaus- ja asennuspaketti. Asennin käyttää omaa Git-kloonia tai lataa alkuperäisen julkisen lähdekoodin. Git ja uv tarvitaan asennusvaiheessa.
+Korjauspaketti projektille https://github.com/shS83/cmedia (root-haara).
 
-## Asenna
+**Tämä paketti päivittää cmedian omasta lähdekoodista.** Mukana on
+asennusskripti ja turvallinen korjaustyökalu, ei koko alkuperäisen
+projektin lähdekoodia. Voit osoittaa asenninta omaan klooniisi. Ilman
+parametria asennin kloonaa lähdekoodin GitHubista väliaikaiseen kansioon.
 
-Pura ZIP ja suorita sen kansiossa:
+## Mikä muuttui?
+
+Edellisessä V1-versiossa `draw_browser()` päivitti jo muuttuneet
+listan rivit, mutta tyhjensi oikean esikatselupaneelin kokonaan aina
+valinnan vaihtuessa. Piirtorutiini myös kutsui kirjoitusta ja flushia
+monesti yhden näppäinpainalluksen aikana, mikä saattoi aiheuttaa
+havaittavaa välähtelyä.
+
+V2:
+
+* pitää tiedostolistan rivit, otsikon, tilarivin ja esikatselun erillisinä
+  piirtovälimuisteina
+* ei lähetä `ESC[2J`-koko ruudun tyhjennystä nuolinäppäimistä,
+  PageUp/PageDown-, Home/End- eikä tavallisesta vierityksestä
+* kirjoittaa **vain muuttuneet listan rivit** eikä koskaan pyyhi
+  listapalkkeja esikatselua vaihdettaessa
+* pitää esikatselun kehykset paikallaan, ja päivittää metatiedoista vain
+  muuttuneet rivit
+* päivittää kuvanvaihdossa vain kuvan sisäalueen; vanhat kuvat täytyy
+  poistaa esikatselusta ennen seuraavan piirtoa
+* lähettää kaikki yhden päivityksen tekstin ja grafiikan yhdessä
+  stdout-kirjoituksessa (ei vaiheittaisia flush-kutsuja)
+* tekee koko ruudun alustuksen vain uudessa hakemistossa, koon muuttuessa,
+  ulkoasun muuttuessa tai palattaessa koko ruudun mediatilasta
+* ei muuta Chafan, Kittyn, Sixelin, Pygamen eikä FFmpegin koodia
+
+## Asennus
+
+### Käytä olemassa olevaa cmedia-kloonia
 
 ```bash
-chmod +x install.sh
-./install.sh ~/Code/cmedia
+unzip cmedia-differential-v2.zip
+cd cmedia-differential-v2
+./install.sh "$HOME/Code/cmedia"
 ```
 
-Jos projektisi on eri hakemistossa, korvaa polku oikealla. Halutessasi voit ajaa `./install.sh` ilman parametria; asennin hakee projektin GitHubista, jos paikallista projektia ei ole nykyhakemistossa.
+Ohjelma varmuuskopioi tarvittaessa lähdetiedoston nimellä
+`src/cmedia/app.py.before-diff-v2.bak`, muuttaa `draw_browser()`-funktion
+ja asentaa käynnistimen `~/.local/bin/cmedia` käyttäjän omaan `uv tool`
+-ympäristöön. Olemassa olevia asetuksia ei poisteta.
 
-Asennuksen jälkeen **`~/.local/bin/cmedia`** toimii käynnistimenä kaikista hakemistoista, kun `~/.local/bin` on PATHissa.
+### Asenna GitHubista ilman paikallista kloonia
 
 ```bash
+./install.sh
+```
+
+Tämä edellyttää toimivaa internetyhteyttä, `git`, `uv` ja `python3`-komentoja.
+Cmedian alkuperäisen ohjelman edellyttämät `chafa`, `ffmpeg` ja Python
+3.13+ tarvitaan edelleen. `uv` voi tarvittaessa hakea Pythonin.
+
+Testaa:
+
+```bash
+command -v cmedia
 cmedia ~/Pictures
 ```
 
-## Muutokset
-
-- Nuolinäppäimet päivittävät vain muuttuvat tiedostolistan rivit: taustapalkkeja ei tyhjennetä koko terminaalin pyyhkimisellä.
-- Valitun rivin vanha ja uusi tyyli kirjoitetaan koko listaleveydelle, ettei vanhoja korostuksia jää näkyviin.
-- Esikatselu ja metatiedot päivittyvät valinnan vaihtuessa. Koko näytön uudelleenpiirto tehdään vain näkymän vaihtumisessa tai terminaalin koon muuttuessa.
-- Nykyiset kuvanäyttöön, Chafaan, Kittyyn, Sixeliin ja Pygameen liittyvät toiminnot säilyvät alkuperäisestä lähdekoodista.
-- Muuttuneesta `app.py`-tiedostosta tehdään `app.py.bak`-varmuuskopio, eikä korjausta yritetä asentaa kahdesti.
-
-Huom. Paketin sisältämää korjausta on tarkastettu syntaksin ja paikallisten testien avulla. Lopullista toimintaa Kitty/Sixel-päätteessä ei ole testattu tässä ympäristössä.
-
-## Git
-
-Kun käytät omaa projektikansiotasi, tarkista muutokset:
+## Jos haluat tehdä muutokset lähdekoodiin asentamatta
 
 ```bash
-cd ~/Code/cmedia
-git diff
-git add src/cmedia/app.py
-git commit -m 'Render browser rows incrementally and add user installer'
-git push
+python3 patch_cmedia.py "$HOME/Code/cmedia"
+git -C "$HOME/Code/cmedia" diff -- src/cmedia/app.py
 ```
 
-Varmuuskopiotiedosto `app.py.bak` ei kuulu commitiin.
+Korjaustyökalu ei yritä tuntemattoman lähdekoodin muokkausta. V2:n
+uudelleenajaminen on turvallista: se tunnistaa jo asennetun korjauksen.
+
+## Testit
+
+```bash
+python3 tests/test_patch.py
+bash tests/test_installer.sh
+```
+
+Testit tarkistavat mm. nuolien välkkymättömyyden ANSI-komentotasolla,
+vierityksen, uudelleenpiirron koon muuttuessa ja asennuksen mock-uv:lla.
+Kittyn ja Sixelin graafista käyttäytymistä pitää vielä testata
+käytännössä käyttäjän päätelaitteella.

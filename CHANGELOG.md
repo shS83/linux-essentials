@@ -1,3 +1,11 @@
+## 0.5.1 — 2026-11-18
+
+- Bundle the exact `cmdvault.png` from shS83/cmdvault/root, verified against Git blob SHA1.
+- CmdVault uses the complete upstream installer; restore a missing PNG from the bundle without mutating the user's project checkout.
+- Fetch full CmdVault GitHub source automatically if not in ~/Code or explicitly provided.
+- Update Cmedia to V2 differential renderer: changed rows, cached metadata, atomic output and stable preview borders.
+- Replace bundled Cmedia V1 patch, include V2 regression tests and installer tests.
+
 ## 0.5.0 — 2026-11-18
 
 - Added Clipvault (PySide6 GUI + optional `--cli`) to Desktop, Developer and All.

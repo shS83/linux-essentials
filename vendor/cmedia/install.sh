@@ -1,37 +1,32 @@
 #!/usr/bin/env bash
-# cmedia-user installer: patch existing sources, install command in ~/.local/bin
+# cmedia V2 installer for shS83/cmedia (Kitty/Sixel/Chafa untouched).
 set -Eeuo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if (( EUID == 0 )); then echo 'Asenna tavallisena käyttäjänä, ei rootina.' >&2; exit 1; fi
+for cmd in git uv python3; do
+    command -v "$cmd" >/dev/null 2>&1 || { echo "Puuttuva komento: $cmd" >&2; exit 1; }
+done
 
-fail() { printf 'Virhe: %s\n' "$*" >&2; exit 1; }
-command -v git >/dev/null || fail 'git puuttuu (Arch: sudo pacman -S git)'
-command -v uv >/dev/null || fail 'uv puuttuu (Arch: sudo pacman -S uv)'
-command -v python3 >/dev/null || fail 'python3 puuttuu'
-
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-project="${1:-}"
-if [[ -n "$project" ]]; then
-    [[ -f "$project/src/cmedia/app.py" ]] || fail 'Anna cmedia-projektin juurihakemisto.'
-elif [[ -f "./src/cmedia/app.py" ]]; then
-    project="$PWD"
-else
-    project="$(mktemp -d -t cmedia-install-XXXXXXXX)"
+project=${1:-}
+if [[ -z $project && -f ./src/cmedia/app.py ]]; then
+    project=$PWD
+fi
+if [[ -z $project ]]; then
+    project=$(mktemp -d -t cmedia-v2-XXXXXXXX)
     trap 'rm -rf -- "$project"' EXIT
-    printf 'Ladataan cmedia (root-haara) GitHubista...\n'
-    git clone --quiet --depth=1 --branch root https://github.com/shS83/cmedia.git "$project" \
-        || fail 'GitHubin lataus epäonnistui. Käytä asenninta oman kloonisi kanssa: ./install.sh ~/Code/cmedia'
+    echo 'Haetaan shS83/cmedia GitHubista...'
+    git clone -q --depth 1 --branch root https://github.com/shS83/cmedia.git "$project"
+else
+    project=$(realpath -e -- "$project")
 fi
+[[ -f $project/src/cmedia/app.py && -f $project/pyproject.toml ]] || {
+    echo "Virhe: ei cmedia-projektin juurihakemisto: $project" >&2; exit 1;
+}
 
-printf 'Korjataan listapalkkien piirtäminen...\n'
-python3 "$script_dir/patch_cmedia.py" "$project"
-
-mkdir -p "$HOME/.local/bin"
-printf 'Asennetaan cmedia-käynnistin polkuun %s/.local/bin/cmedia ...\n' "$HOME"
-UV_TOOL_BIN_DIR="$HOME/.local/bin" uv tool install --force "$project" \
-    || fail 'uv tool install epäonnistui; lähdekoodi on silti korjattu.'
-
-[[ -x "$HOME/.local/bin/cmedia" ]] || fail 'Käynnistin puuttuu asennuksen jälkeen.'
-printf '\nValmis! Käynnistä missä tahansa hakemistossa: cmedia\n'
-if [[ ":${PATH:-}:" != *":$HOME/.local/bin:"* ]]; then
-    printf 'Lisää PATHiin: export PATH="$HOME/.local/bin:$PATH"\n'
-fi
-printf '\nMuistutus: tarkista muutokset ja tee Git-commit/push, jos asensit oman projektikloonin kautta.\n'
+python3 "$here/patch_cmedia.py" "$project"
+install -d -m 755 "$HOME/.local/bin"
+UV_TOOL_BIN_DIR="$HOME/.local/bin" uv tool install --force "$project"
+[[ -x $HOME/.local/bin/cmedia ]] || { echo 'cmedia-käynnistintä ei syntynyt' >&2; exit 1; }
+echo "Asennettu: $HOME/.local/bin/cmedia"
+echo 'Käynnistä: cmedia ~/Pictures'
+echo 'Huom: omaan klooniin tehdyt muutokset voi tarkistaa git diff -komennolla.'
