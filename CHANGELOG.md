@@ -1,9 +1,23 @@
-## 0.4.2 — dotfiles-sync
+## 0.5.0 — 2026-11-18
 
-- Add dotfiles-sync to Desktop, Developer and All profiles.
-- Bundle its executable and systemd user units under vendor/.
-- Set up a machine-specific bare Git repository and optional private GitHub publication.
-- Keep systemd timer enablement opt-in via --enable-services.
+- Added Clipvault (PySide6 GUI + optional `--cli`) to Desktop, Developer and All.
+- Bundled the November 16 Clipvault GUI statusbar hotfix, icon and DB action helper.
+- Added `--latest`: fetch current sources for all personal tools into temporary
+  directories without touching user-owned Git checkouts.
+- Updated CmdVault integration to use its full upstream installer (src modules,
+  image and shell support) rather than copying a single script.
+- Updated SRVPULSE installation to include GUI extras and optional launchers.
+- Added dotfiles-sync with user-local launcher and optional timer integration.
+- Preserved existing configs and made Clipvault installation opt-in/no autostart.
+- Existing CPROJ bulk `git pull --ff-only`, Cmedia flicker patch, NADAR and
+  GitPublish remain available. An explicit `--latest --upgrade-tools` updates
+  them from GitHub.
+
+## v0.4.2 — CPROJ v0.2.1 (2026-11-10)
+- Updated bundled CPROJ to v0.2.1.
+- Bash wrapper now passes option-style commands through to the CPROJ executable.
+- Active shell function needs reloading after install: `source ~/.config/cproj/cproj.bash`.
+- CPROJ Git pull integration tests cover option forwarding.
 
 # Changelog
 

@@ -6,7 +6,6 @@ Type=simple
 ExecStart=/Tools/dotfiles-sync
 Restart=on-failure
 RestartSec=5
-Environment=
 NoNewPrivileges=true
 
 [Install]

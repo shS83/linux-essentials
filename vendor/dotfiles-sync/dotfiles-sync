@@ -1,10 +1,40 @@
-#!/bin/bash
-echo $HOSTNAME
-pvm=$(date +%d%m%Y_%H%M)
-cd ~
-for file in $(cat ~/.dotfiles-sync)
-do
-[[ -f "$file" ]] && git add "${file}"
-done
-git commit -m "Auto-sync @ $HOSTNAME -- ${pvm}"
-git push
+#!/usr/bin/env bash
+# Linux Essentials compatibility fix for dotfiles-sync's external bare Git repository.
+set -Eeuo pipefail
+host=$(hostname -s)
+repo="${DOTFILES_SYNC_REPO:-$HOME/.dotfiles-sync-${host}.git}"
+config="$HOME/.dotfiles-sync"
+[[ -f $config ]] || { echo "dotfiles-sync: missing $config" >&2; exit 1; }
+if [[ ! -d $repo ]]; then
+  echo "dotfiles-sync: initialize a bare repository: git init --bare --initial-branch=main '$repo'" >&2
+  exit 1
+fi
+gitargs=(--git-dir="$repo" --work-tree="$HOME")
+[[ $(git --git-dir="$repo" rev-parse --is-bare-repository) == true ]] || {
+  echo 'dotfiles-sync: expected a bare Git repository' >&2; exit 1;
+}
+# Only explicitly listed paths are staged; no recursive HOME discovery.
+count=0
+while IFS= read -r f || [[ -n $f ]]; do
+  [[ $f == '' || $f == \#* ]] && continue
+  [[ $f != /* && $f != *'..'* && $f != -* ]] || {
+    printf 'dotfiles-sync: unsafe path skipped: %s\n' "$f" >&2; continue;
+  }
+  if [[ -f $HOME/$f ]]; then
+    git "${gitargs[@]}" add -- "$f"
+    ((count+=1))
+  fi
+done < "$config"
+if git "${gitargs[@]}" diff --cached --quiet; then
+  echo 'dotfiles-sync: no changes'
+  exit 0
+fi
+if ! git "${gitargs[@]}" commit -m "Auto-sync @ ${host} -- $(date +%Y-%m-%d_%H:%M)"; then
+  echo 'dotfiles-sync: commit failed; configure your Git identity' >&2
+  exit 1
+fi
+if git "${gitargs[@]}" remote get-url origin >/dev/null 2>&1; then
+  git "${gitargs[@]}" push
+else
+  echo 'dotfiles-sync: committed locally (no origin remote, push skipped)'
+fi

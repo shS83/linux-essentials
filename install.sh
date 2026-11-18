@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.4.3'
+readonly VERSION='0.5.0'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -13,10 +13,10 @@ declare -a TOOLS=(
   fzf fd ripgrep bat eza lsd yazi
   btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq
   git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace
-  cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync
+  cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault
   uv chafa ffmpeg python3
 )
-declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync)
+declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault)
 declare -A TOOL_SOURCES=()
 declare -A KNOWN=() SELECTED=() STATUS=() PACKAGE=()
 for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
@@ -24,7 +24,8 @@ for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
 PM='' DISTRO=''
 PROFILE='' FROM_FILE='' EXPORT_FILE='' SHOW_ALL=0
 YES=0 DRY_RUN=0 AUR=0 FORCE=0 SUMMARY_ONLY=0
-UPGRADE_TOOLS=0 SHELL_INTEGRATION=0 ENABLE_SERVICES=0
+UPGRADE_TOOLS=0 SHELL_INTEGRATION=0 ENABLE_SERVICES=0 LATEST=0
+LATEST_CACHE=
 NO_COLOR=${NO_COLOR:-}
 C_RESET='' C_PURPLE='' C_TEAL='' C_GREEN='' C_YELLOW='' C_RED='' C_MUTED='' C_BLUE=''
 
@@ -57,6 +58,8 @@ Usage:
   $SCRIPT_NAME --profile all --dry-run Preview, never install
   $SCRIPT_NAME --profile developer --source cmdvault=/path/to/cmdvault
   $SCRIPT_NAME --import <(printf "cmedia\n") --source cmedia=~/Code/cmedia
+  $SCRIPT_NAME --profile developer --upgrade-tools --latest
+  $SCRIPT_NAME --import <(printf "clipvault\n") --yes --latest
   $SCRIPT_NAME --profile all --summary Show status, never install
   $SCRIPT_NAME --list                  Show the complete toolkit catalog
   $SCRIPT_NAME --export [FILE]         Export detected installed tools to a list
@@ -74,6 +77,8 @@ Options:
       --force             Allow --export to overwrite an existing file
       --source NAME=DIR   Use a local project directory/file for a personal tool
       --upgrade-tools     Reinstall selected personal tools even if present
+      --latest            Install personal tools from their latest GitHub default branch
+                          (does not mutate your existing ~/Code checkouts)
       --shell-integration  Add the CPROJ source line to ~/.bashrc (opt-in)
       --enable-services   Enable/start NADAR and dotfiles-sync user units (opt-in)
   -h, --help              Show this help
@@ -83,11 +88,12 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
-  • Bundled: cproj, nadar, srvpulse, gitpublish, and the cmedia diff installer.
-  • CmdVault still needs your source. Cmedia clones GitHub if no local checkout exists.
+  • Bundled: CPROJ, NADAR, SRVPULSE, GitPublish, cmedia patch and Clipvault GUI overlay.
+  • For current CmdVault, use --latest or --source cmdvault=~/Code/cmdvault.
+  • Clipvault requires a graphical session, PostgreSQL and Python >=3.15 via uv.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
-  • dotfiles-sync installs into /Tools, with opt-in --enable-services timer.
+  • dotfiles-sync installs a user-local launcher and optionally /Tools integration.
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Cmedia installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
@@ -115,6 +121,7 @@ parse_args() {
       --aur) AUR=1; shift ;;
       --force) FORCE=1; shift ;;
       --upgrade-tools) UPGRADE_TOOLS=1; shift ;;
+      --latest) LATEST=1; shift ;;
       --shell-integration) SHELL_INTEGRATION=1; shift ;;
       --enable-services) ENABLE_SERVICES=1; shift ;;
       --source)
@@ -122,7 +129,7 @@ parse_args() {
         local spec=$2 name path
         [[ $spec == *=* ]] || die '--source requires NAME=DIR'
         name=${spec%%=*}; path=${spec#*=}
-        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync) ;; *) die "Unknown personal tool: $name" ;; esac
+        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault) ;; *) die "Unknown personal tool: $name" ;; esac
         [[ -n $path ]] || die '--source requires a nonempty directory or file path'
         TOOL_SOURCES[$name]=$path
         shift 2 ;;
@@ -189,7 +196,7 @@ package_for() {
 }
 
 is_personal_tool() {
-  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync) return 0 ;; *) return 1 ;; esac
+  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault) return 0 ;; *) return 1 ;; esac
 }
 
 personal_source() {
@@ -210,13 +217,23 @@ personal_source() {
       fi
     done
   fi
+  # Clipvault is a complete project, not just its GUI overlay. Without --latest,
+  # prefer an existing source checkout when available.
+  if [[ $id == clipvault ]]; then
+    for candidate in "$HOME/Code/Clipvault" "$HOME/Code/clipvault" "/Tools/Clipvault"; do
+      if [[ -f $candidate/pyproject.toml && -f $candidate/clipvault_gui.py && -f $candidate/database.py ]]; then
+        printf '%s' "$candidate"; return 0
+      fi
+    done
+  fi
   base="$SCRIPT_DIR/vendor/$id"
   if [[ -d $base ]]; then
     case $id in
       cmdvault) [[ -f $base/cmdvault || -f $base/cmdvault.py || -f $base/pyproject.toml ]] || return 1 ;;
       gitpublish) [[ -f $base/gitpublish ]] || return 1 ;;
-      dotfiles-sync) [[ -f $base/dotfiles-sync && -f $base/dotfiles-sync.service && -f $base/dotfiles-sync.timer ]] || return 1 ;;
       cmedia) [[ -f $base/install.sh && -f $base/patch_cmedia.py ]] || return 1 ;;
+      dotfiles-sync) [[ -f $base/dotfiles-sync && -f $base/dotfiles-sync.timer && -f $base/dotfiles-sync.service ]] || return 1 ;;
+      clipvault) [[ -f $base/clipvault_gui.py && -f $base/clipvault.png ]] || return 1 ;;
     esac
     printf '%s' "$base"
     return 0
@@ -271,10 +288,12 @@ status_for() {
   if is_personal_tool "$id"; then
     # Personal tools are managed in ~/.local/bin even if an older copy
     # happens to be installed somewhere else on PATH.
-    if [[ $id == dotfiles-sync && -x /Tools/dotfiles-sync ]] || [[ -x "$HOME/.local/bin/$id" ]]; then
+    if [[ -x "$HOME/.local/bin/$id" ]]; then
       printf 'installed'
     elif personal_source "$id" >/dev/null; then
       printf 'local pending'
+    elif (( LATEST )); then
+      printf 'GitHub pending'
     else
       printf 'source needed'
     fi
@@ -309,9 +328,9 @@ select_profile() {
     minimal)
       pick='git curl wget unzip zip openssh fzf fd ripgrep bat eza lsd pv jq' ;;
     desktop)
-      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync' ;;
+      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault' ;;
     developer)
-      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync' ;;
+      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault' ;;
     server)
       pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat lsd pv htop ncdu jq tmux byobu lsof nmap strace srvpulse' ;;
     all)
@@ -362,7 +381,7 @@ export_tools() {
 
 show_banner() {
   printf '%b╭─────────────────────────────────────────────────────────╮%b\n' "$C_PURPLE" "$C_RESET"
-  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-17s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
+  printf '%b│  ◈  LINUX ESSENTIALS  /  BOOTSTRAP v%-20s│%b\n' "$C_PURPLE" "$VERSION" "$C_RESET"
   printf '%b╰─────────────────────────────────────────────────────────╯%b\n' "$C_PURPLE" "$C_RESET"
   printf '%b  SYSTEM%b %-18s %bMANAGER%b %s\n' "$C_MUTED" "$C_RESET" "$DISTRO" "$C_MUTED" "$C_RESET" "$PM"
 }
@@ -379,7 +398,7 @@ show_summary() {
     color=$C_YELLOW
     case $stat in
       installed) color=$C_GREEN; ((++present)) ;;
-      missing|'AUR pending'|'local pending') ((++pending)) ;;
+      missing|'AUR pending'|'local pending'|'GitHub pending') ((++pending)) ;;
       unavailable|'AUR skipped'|'source needed') color=$C_RED; ((++unsupported)) ;;
     esac
     printf '%b%-20s%b %-23s %b%-15s%b\n' "$C_BLUE" "$tool" "$C_RESET" "$pkg" "$color" "$stat" "$C_RESET"
@@ -429,7 +448,11 @@ resolve_dependencies() {
   fi
   if [[ -n ${SELECTED[dotfiles-sync]:-} ]]; then
     SELECTED[git]=1
-    SELECTED[gh]=1
+  fi
+  if [[ -n ${SELECTED[clipvault]:-} ]]; then
+    SELECTED[git]=1
+    SELECTED[uv]=1
+    SELECTED[python3]=1
   fi
   if [[ -n ${SELECTED[cmedia]:-} ]]; then
     SELECTED[git]=1
@@ -523,86 +546,61 @@ make_debian_aliases() {
   case :$PATH: in *":$HOME/.local/bin:"*) ;; *) warn "Add $HOME/.local/bin to PATH to use the new fd/bat aliases." ;; esac
 }
 
+# All repositories in this mapping are owned by the same account. --latest fetches
+# into a fresh, temporary directory; never git-pulls the user's worktree.
+latest_repo_name() {
+  case $1 in
+    cproj) printf 'cproj:root' ;;
+    cmdvault) printf 'cmdvault:root' ;;
+    nadar) printf 'nadar:root' ;;
+    srvpulse) printf 'srvpulse:root' ;;
+    gitpublish) printf 'git-publish:main' ;;
+    cmedia) printf 'cmedia:root' ;;
+    dotfiles-sync) printf 'dotfiles-sync:root' ;;
+    clipvault) printf 'Clipvault:root' ;;
+    *) return 1 ;;
+  esac
+}
+
+fetch_latest_personal_source() {
+  local id=$1 spec repo branch dir
+  spec=$(latest_repo_name "$id") || return 1
+  repo=${spec%%:*}
+  branch=${spec#*:}
+  [[ -n $LATEST_CACHE && -d $LATEST_CACHE ]] || return 1
+  dir="$LATEST_CACHE/$id"
+  command -v git >/dev/null 2>&1 || { error 'git is required for --latest'; return 1; }
+  if [[ ! -d $dir/.git ]]; then
+    info "Fetching $id from shS83/$repo ($branch)..." >&2
+    git clone --quiet --depth 1 --branch "$branch" "https://github.com/shS83/$repo.git" "$dir" || return 1
+  fi
+  local sha
+  sha=$(git -C "$dir" rev-parse --short=12 HEAD) || return 1
+  info "GitHub snapshot: shS83/$repo @ $sha" >&2
+  printf '%s' "$dir"
+}
+
+source_for_install() {
+  local id=$1
+  if [[ -n ${TOOL_SOURCES[$id]:-} ]]; then
+    personal_source "$id"
+  elif (( LATEST )); then
+    fetch_latest_personal_source "$id"
+  elif [[ $id == clipvault ]]; then
+    local source
+    source=$(personal_source "$id") || return 1
+    if [[ $source == "$SCRIPT_DIR/vendor/clipvault" && ! -f $source/database.py ]]; then
+      fetch_latest_personal_source "$id"
+    else
+      printf '%s' "$source"
+    fi
+  else
+    personal_source "$id"
+  fi
+}
+
 # Local/personal tool installation never needs root. Bundled sources are versioned
 # within this repository; custom sources must be explicitly supplied by the user.
-# Set up the bare Git repository for this machine. Never stage all of HOME.
-dotfiles_sync_setup() {
-  local machine=${HOSTNAME:-} repo exclude_file
-  if [[ -z $machine && -r /proc/sys/kernel/hostname ]]; then
-    IFS= read -r machine < /proc/sys/kernel/hostname || true
-  fi
-  [[ -n $machine ]] || { error 'Cannot determine hostname for dotfiles-sync'; return 1; }
-  machine=${machine%%.*}
-  repo="$HOME/.dotfiles-sync-${machine}.git"
-  if [[ ! -e $repo ]]; then
-    git init --bare --initial-branch=main "$repo" || return 1
-    info "Created dotfiles repository: $repo"
-  elif [[ $(git --git-dir="$repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
-    error "Not a bare Git repository: $repo"
-    return 1
-  fi
-  git --git-dir="$repo" config status.showUntrackedFiles no || return 1
-  exclude_file="$repo/info/exclude"
-  if ! grep -Fxq '/*' "$exclude_file" 2>/dev/null; then
-    printf '\n# dotfiles-sync: do not automatically add all of HOME\n/*\n' >> "$exclude_file" || return 1
-  fi
-  dotfiles_sync_publish "$repo" "$machine"
-}
-
-# Create a private GitHub repository when absent; never upload untracked HOME files.
-dotfiles_sync_publish() {
-  local repo=$1 machine=$2 owner repo_name response remote current branch name email created=0
-  repo_name="dotfiles-sync-${machine}"
-  if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
-    warn 'dotfiles-sync: gh is unavailable or unauthenticated; GitHub publication skipped'
-    return 0
-  fi
-  owner=$(gh api user --jq '.login' 2>/dev/null) || {
-    warn 'dotfiles-sync: could not determine GitHub user'; return 0;
-  }
-  [[ -n $owner ]] || { warn 'dotfiles-sync: empty GitHub username'; return 0; }
-  remote="git@github.com:${owner}/${repo_name}.git"
-  if current=$(git --git-dir="$repo" remote get-url origin 2>/dev/null); then
-    if [[ $current != "$remote" ]]; then
-      warn "dotfiles-sync: origin already points to $current; leaving it unchanged"
-      return 0
-    fi
-  fi
-  if response=$(gh api -i "repos/${owner}/${repo_name}" 2>&1); then
-    info "GitHub repository exists: $owner/$repo_name"
-  elif [[ $response =~ HTTP/[0-9.]+[[:space:]]+404 ]]; then
-    info "Creating private GitHub repository: $owner/$repo_name"
-    if ! gh repo create "$owner/$repo_name" --private \
-        --description "Dotfiles backup for $machine"; then
-      warn 'dotfiles-sync: GitHub repository creation failed'
-      return 0
-    fi
-    created=1
-  else
-    warn 'dotfiles-sync: GitHub check failed (not treating it as 404)'
-    return 0
-  fi
-  if ! git --git-dir="$repo" remote get-url origin >/dev/null 2>&1; then
-    git --git-dir="$repo" remote add origin "$remote" || return 1
-  fi
-  # Only newly created repos get an automatic initial commit and push.
-  if (( created )); then
-    if ! git --git-dir="$repo" rev-parse --verify HEAD >/dev/null 2>&1; then
-      name=$(git config user.name || :)
-      email=$(git config user.email || :)
-      [[ -n $name ]] || name=$owner
-      [[ -n $email ]] || email="${owner}@users.noreply.github.com"
-      git -c user.name="$name" -c user.email="$email" \
-          -c commit.gpgsign=false --git-dir="$repo" --work-tree="$HOME" \
-          commit --allow-empty -m "Initialize $repo_name" || return 1
-    fi
-    branch=$(git --git-dir="$repo" symbolic-ref --quiet --short HEAD) || return 1
-    if ! git --git-dir="$repo" push -u origin "$branch"; then
-      warn 'dotfiles-sync: GitHub repository created but initial push failed'
-    fi
-  fi
-}
-
 install_personal_tool() {
   local id=$1 src=$2 bindir="$HOME/.local/bin"
   mkdir -p -- "$bindir" || return 1
@@ -664,36 +662,6 @@ install_personal_tool() {
         bash "$cmedia_installer" "$src" || return 1
       fi
       ;;
-    dotfiles-sync)
-      [[ -d $src && -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
-        error 'dotfiles-sync source must contain dotfiles-sync, dotfiles-sync.service and dotfiles-sync.timer'; return 1;
-      }
-      bash -n "$src/dotfiles-sync" || { error 'dotfiles-sync has invalid Bash syntax'; return 1; }
-      # Keep the canonical executable path used by dotfiles-sync.service.
-      if [[ -d /Tools && -w /Tools ]]; then
-        install -Dm755 -- "$src/dotfiles-sync" /Tools/dotfiles-sync || return 1
-      else
-        sudo_prefix
-        "${ROOT_CMD[@]}" install -Dm755 -- "$src/dotfiles-sync" /Tools/dotfiles-sync || return 1
-      fi
-      install -Dm644 -- "$src/dotfiles-sync.service" "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
-      install -Dm644 -- "$src/dotfiles-sync.timer" "$HOME/.config/systemd/user/dotfiles-sync.timer" || return 1
-      # Optional default manifest: never overwrite machine-specific selections.
-      if [[ -f $src/.dotfiles-sync && ! -e $HOME/.dotfiles-sync ]]; then
-        install -m644 -- "$src/.dotfiles-sync" "$HOME/.dotfiles-sync" || return 1
-        info 'Installed default ~/.dotfiles-sync'
-      fi
-      dotfiles_sync_setup || return 1
-      if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
-        systemctl --user daemon-reload || warn 'dotfiles-sync: could not reload user systemd'
-        if (( ENABLE_SERVICES )); then
-          # Timer activates the service on schedule; separate enablement is unnecessary.
-          systemctl --user enable --now dotfiles-sync.timer || return 1
-        fi
-      elif (( ENABLE_SERVICES )); then
-        warn 'dotfiles-sync: no user systemd manager; timer installed but not enabled'
-      fi
-      ;;
     gitpublish)
       local file=$src
       if [[ -d $src ]]; then file="$src/gitpublish"; fi
@@ -701,8 +669,58 @@ install_personal_tool() {
       bash -n "$file" || { error 'GitPublish has invalid Bash syntax'; return 1; }
       install -Dm755 -- "$file" "$bindir/gitpublish" || return 1
       ;;
+    dotfiles-sync)
+      [[ -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
+        error 'dotfiles-sync source is incomplete'; return 1;
+      }
+      # Correct upstream's bare-repo invocation to use explicit --git-dir
+      # and --work-tree; no global git config changes or automatic GitHub push.
+      install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
+      for unit in dotfiles-sync.service dotfiles-sync.timer; do
+        install -Dm644 -- "$src/$unit" "$HOME/.config/systemd/user/$unit" || return 1
+      done
+      # Point the user unit at the user-local executable rather than /Tools.
+      sed -i 's|^ExecStart=/Tools/dotfiles-sync$|ExecStart=%h/.local/bin/dotfiles-sync|' \
+        "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
+      if [[ ! -e $HOME/.dotfiles-sync && -f $src/.dotfiles-sync ]]; then
+        install -Dm600 -- "$SCRIPT_DIR/vendor/dotfiles-sync/.dotfiles-sync" "$HOME/.dotfiles-sync" || return 1
+      fi
+      # The upstream service runs /Tools/dotfiles-sync. Never create a user
+      # systemd unit pointing at a command that is not actually there.
+      # Initialize a machine-specific local bare repo only when absent.
+      # No home-directory files are staged, and no GitHub repository is created.
+      local df_host df_repo
+      df_host=$(hostname -s)
+      df_repo="$HOME/.dotfiles-sync-${df_host}.git"
+      if [[ ! -e $df_repo ]]; then
+        git init --bare --initial-branch=main "$df_repo" || return 1
+        git --git-dir="$df_repo" config status.showUntrackedFiles no || return 1
+      elif [[ $(git --git-dir="$df_repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
+        error "dotfiles-sync: $df_repo exists but is not a bare Git repo"; return 1
+      fi
+      # Compatibility path is optional; the installed unit below uses %h
+      # and therefore needs no system-wide writable directory.
+      if [[ -d /Tools && -w /Tools ]]; then
+        install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" /Tools/dotfiles-sync || return 1
+      fi
+      if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+        systemctl --user daemon-reload || warn 'dotfiles-sync: user systemd reload unavailable'
+        if (( ENABLE_SERVICES )); then
+          systemctl --user enable --now dotfiles-sync.timer || return 1
+        fi
+      elif (( ENABLE_SERVICES )); then
+        warn 'dotfiles-sync: no active user systemd manager; timer not enabled'
+      fi
+      ;;
+    clipvault)
+      install_clipvault "$src" || return 1
+      ;;
     srvpulse|cmdvault)
-      if [[ -d $src && -f $src/pyproject.toml ]]; then
+      if [[ $id == cmdvault && -f $src/install.sh && -f $src/src/visuals/picker.py && -f $src/cmdvault ]]; then
+        # CmdVault's package uses adjacent src/ modules and a Kitty logo;
+        # installing a single script breaks its imports and graphics.
+        bash "$src/install.sh" || return 1
+      elif [[ -d $src && -f $src/pyproject.toml ]]; then
         install_python_tool "$id" "$src" || return 1
       elif [[ $id == cmdvault ]]; then
         local file=$src
@@ -729,13 +747,61 @@ install_personal_tool() {
   case :$PATH: in *":$bindir:"*) ;; *) warn "Add $bindir to PATH to run personal tools." ;; esac
 }
 
+# Isolated Clipvault application installation. No DB initialization or services:
+# PostgreSQL credentials/schema must already be configured by the user.
+install_clipvault() {
+  local src=$1 app="${XDG_DATA_HOME:-$HOME/.local/share}/linux-essentials/clipvault/app"
+  local vendor="$SCRIPT_DIR/vendor/clipvault" f
+  [[ -f $src/database.py && -f $src/pyproject.toml && -f $src/clipvault_gui.py ]] || {
+    error 'Clipvault needs a complete source checkout; use --latest or --source clipvault=~/Code/Clipvault'
+    return 1
+  }
+  command -v uv >/dev/null 2>&1 || { error 'Clipvault requires uv'; return 1; }
+  mkdir -p -- "$app" "$HOME/.local/bin" || return 1
+  for f in clipvault.py clipvault_gui.py clipvault_gui_finnish.py database.py database_actions.py security.py syntax.py pyproject.toml uv.lock clipvault.png; do
+    [[ -f $src/$f ]] || continue
+    if [[ $f == database.py && -f $app/database.py ]]; then
+      info 'Clipvault: preserving existing installed database.py settings'
+      continue
+    fi
+    install -Dm644 -- "$src/$f" "$app/$f" || return 1
+  done
+  # The Nov 16 statusbar hotfix is newer than the archived GUI distribution.
+  # Apply only to the bundled source, not to an explicitly selected clone.
+  if (( ! LATEST )) && [[ -z ${TOOL_SOURCES[clipvault]:-} ]] && [[ -f $vendor/clipvault_gui.py ]]; then
+    install -Dm644 -- "$vendor/clipvault_gui.py" "$app/clipvault_gui.py" || return 1
+  fi
+  if [[ -f $src/uv.lock ]]; then
+    uv sync --project "$app" --frozen || return 1
+  else
+    uv sync --project "$app" || return 1
+  fi
+  [[ -x $app/.venv/bin/python ]] || { error 'Clipvault environment missing (Python >=3.15 required)'; return 1; }
+  cat > "$HOME/.local/bin/clipvault" <<'CLIPVAULT_LAUNCHER'
+#!/usr/bin/env bash
+set -euo pipefail
+app="${XDG_DATA_HOME:-$HOME/.local/share}/linux-essentials/clipvault/app"
+if [[ ${1:-} == --cli ]]; then
+    shift
+    exec "$app/.venv/bin/python" "$app/clipvault.py" "$@"
+fi
+exec "$app/.venv/bin/python" "$app/clipvault_gui.py" "$@"
+CLIPVAULT_LAUNCHER
+  chmod 755 -- "$HOME/.local/bin/clipvault" || return 1
+  info 'Clipvault installed; run clipvault in a graphical session. PostgreSQL setup is not automated.'
+}
+
 install_python_tool() {
   local id=$1 src=$2 venv="$HOME/.local/share/linux-essentials/venvs/$1"
   command -v python3 >/dev/null 2>&1 || { error 'python3 is required'; return 1; }
   mkdir -p -- "$(dirname -- "$venv")" || return 1
   if command -v uv >/dev/null 2>&1; then
     uv venv --allow-existing "$venv" || return 1
-    uv pip install --python "$venv/bin/python" -- "$src" || return 1
+    if [[ $id == srvpulse ]]; then
+      uv pip install --python "$venv/bin/python" -- "$src[gui]" || return 1
+    else
+      uv pip install --python "$venv/bin/python" -- "$src" || return 1
+    fi
   else
     if [[ ! -x $venv/bin/python ]]; then
       python3 -m venv "$venv" || { error 'python3 -m venv failed; install python3-venv'; return 1; }
@@ -746,6 +812,15 @@ install_python_tool() {
   # The wrapper lives at ~/.local/bin; dependencies live in an isolated venv.
   printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$venv/bin/$id" > "$HOME/.local/bin/$id" || return 1
   chmod 755 -- "$HOME/.local/bin/$id"
+  if [[ $id == srvpulse ]]; then
+    local extra
+    for extra in srvpulse-gui srvpulse-askpass; do
+      if [[ -x $venv/bin/$extra ]]; then
+        printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$venv/bin/$extra" > "$HOME/.local/bin/$extra" || return 1
+        chmod 755 -- "$HOME/.local/bin/$extra"
+      fi
+    done
+  fi
   if [[ $id == srvpulse && ! -e $HOME/.config/srvpulse/config.toml ]]; then
     if [[ -f $src/config.example.toml ]]; then
       install -Dm600 -- "$src/config.example.toml" "$HOME/.config/srvpulse/config.toml" || return 1
@@ -775,7 +850,12 @@ run_install() {
     for tool in "${PERSONAL_TOOLS[@]}"; do
       [[ -n ${SELECTED[$tool]:-} ]] || continue
       if [[ ${STATUS[$tool]} == installed && $UPGRADE_TOOLS != 1 ]]; then continue; fi
-      if source=$(personal_source "$tool"); then
+      if (( LATEST )) && [[ -z ${TOOL_SOURCES[$tool]:-} ]]; then
+        printf '  Personal install:   %-12s from GitHub shS83/%s (--latest)\n' "$tool" "$(latest_repo_name "$tool")"
+      elif [[ $tool == clipvault && -z ${TOOL_SOURCES[$tool]:-} ]] &&
+           [[ $(personal_source "$tool" || :) == "$SCRIPT_DIR/vendor/clipvault" ]]; then
+        printf '  Personal install:   %-12s from GitHub shS83/Clipvault (GUI overlay bundled)\n' "$tool"
+      elif source=$(personal_source "$tool"); then
         printf '  Personal install:   %-12s from %s\n' "$tool" "$source"
       else
         printf '  Personal missing:   %-12s (provide --source %s=DIR)\n' "$tool" "$tool"
@@ -805,13 +885,17 @@ run_install() {
     fi
   done
   make_debian_aliases
+  if (( LATEST )) || [[ -n ${SELECTED[clipvault]:-} ]]; then
+    LATEST_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/linux-essentials-latest.XXXXXXXX") || return 1
+    trap '[[ -z ${LATEST_CACHE:-} ]] || rm -rf -- "$LATEST_CACHE"' EXIT
+  fi
   for tool in "${PERSONAL_TOOLS[@]}"; do
     [[ -n ${SELECTED[$tool]:-} ]] || continue
     if [[ ${STATUS[$tool]} == installed && $UPGRADE_TOOLS != 1 ]] && \
-       ! { [[ $tool == cproj && $SHELL_INTEGRATION == 1 ]] || [[ $tool == nadar && $ENABLE_SERVICES == 1 ]] || [[ $tool == dotfiles-sync && $ENABLE_SERVICES == 1 ]]; }; then
+       ! { [[ $tool == cproj && $SHELL_INTEGRATION == 1 ]] || [[ $tool == nadar && $ENABLE_SERVICES == 1 ]]; }; then
       continue
     fi
-    if ! source=$(personal_source "$tool"); then
+    if ! source=$(source_for_install "$tool"); then
       failures+=("$tool:source")
       error "Source for $tool is missing; use --source $tool=/path/to/project (or add vendor/$tool)."
       continue

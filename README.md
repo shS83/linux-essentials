@@ -1,4 +1,4 @@
-# Linux Essentials Bootstrap v0.4.1
+# Linux Essentials Bootstrap v0.4.2
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
@@ -54,7 +54,7 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 
 | Tool | Executable | Additional files |
 | --- | --- | --- |
-| CPROJ v0.2.0 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
+| CPROJ v0.2.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
 | CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
@@ -187,33 +187,64 @@ printf 'cproj\n' > /tmp/cproj.list
 ./install.sh --import /tmp/cproj.list --yes --upgrade-tools
 ```
 
-### dotfiles-sync: machine-specific dotfiles backup
 
-`dotfiles-sync` is bundled under `vendor/dotfiles-sync/` and included in the
-Desktop, Developer and All profiles. It installs the executable into
-`/Tools/dotfiles-sync` and user units into `~/.config/systemd/user/`.
+### CPROJ bulk pull / shell reload
 
-The installer initializes a bare repository at
-`~/.dotfiles-sync-${HOSTNAME}.git` using `$HOME` as its work tree and sets
-`status.showUntrackedFiles=no`. All new paths are ignored by default to prevent
-accidental publication of SSH keys, tokens, and other private HOME files.
-Track chosen files explicitly with `git --git-dir=... --work-tree="$HOME" add -f PATH`.
-
-If `gh` is authenticated, the bootstrap checks for a matching private GitHub
-repository, creates it only if missing, and publishes an empty initial commit.
-It does *not* automatically upload the contents of `$HOME`. An authentication
-or network failure does not trigger a duplicate repository creation.
+After upgrading bundled CPROJ, reload the Bash integration in each active shell:
 
 ```bash
-./install.sh --profile developer --dry-run
-./install.sh --profile developer --yes --enable-services
-# Or install this tool alone:
-printf 'dotfiles-sync\n' > /tmp/dotfiles-sync.list
-./install.sh --import /tmp/dotfiles-sync.list --yes --enable-services
+source ~/.config/cproj/cproj.bash
+cproj --pull-all --dry-run
+cproj --pull-all
 ```
 
-The timer is enabled only with `--enable-services`; otherwise its systemd
-unit files are installed but left inactive. Use `--upgrade-tools` to reinstall
-updated bundled files.
+`command cproj --pull-all` bypasses a stale Bash function immediately.
 
-The bundled `dotfiles-sync` files can be refreshed from `~/Code/dotfiles-sync`. An optional `.dotfiles-sync` default manifest is installed only when `~/.dotfiles-sync` does not exist; existing selections are preserved. Enable only `dotfiles-sync.timer` via `--enable-services` because the timer starts the service on schedule.
+## v0.5.0: refresh personal tools and Clipvault
+
+The archive includes the original bootstrap and a complete Clipvault
+source snapshot with its November 16 GUI/art hotfix. To update installed personal tools from the current GitHub sources:
+
+```bash
+./install.sh --profile developer --dry-run --upgrade-tools --latest
+./install.sh --profile developer --yes --upgrade-tools --latest
+```
+
+`--latest` clones official `shS83` repositories into a temporary directory and
+installs their latest default-branch contents. This requires internet and may
+install newer versions than those available on archive creation day. It never
+changes `~/Code` checkouts. `--source NAME=PATH` takes priority over `--latest`.
+This is not an offline snapshot of every upstream repo. Without `--latest`,
+older bundled versions are used where available; the Clipvault source snapshot
+can be installed without cloning (Python packages still require uv/cache/network).
+
+Clipvault is optional and available in Desktop, Developer, and All. Install only
+Clipvault with:
+
+```bash
+printf 'clipvault\n' > /tmp/clipvault.list
+./install.sh --import /tmp/clipvault.list --dry-run --latest
+./install.sh --import /tmp/clipvault.list --yes --latest
+clipvault  # GUI, requires DISPLAY or WAYLAND_DISPLAY
+clipvault --cli  # explicit terminal clipboard watcher
+```
+
+Clipvault is NOT started automatically. It needs `uv`, Python >=3.15 (which
+uv may download), PySide6, and an existing PostgreSQL `clipvault` database and
+roles/schema. Its source uses `dbname=clipvault user=clipvault host=localhost`.
+No PostgreSQL setup, credential changes, or clipboard capture is performed
+by the installer. Entries are plaintext, and heuristic secret filtering is
+not a complete confidentiality guarantee. Wayland clipboard monitoring depends
+on the compositor.
+
+Dotfiles-sync is also included. The upstream service expects its executable at `/Tools/dotfiles-sync`, but
+this bundle adapts the user unit to `%h/.local/bin/dotfiles-sync` and repairs
+bare-repository staging. Set up the local bare Git repository (and remote, if
+used) before enabling the timer. The installer never creates GitHub
+repositories or starts this timer by default; use `--enable-services` only
+after verifying your dotfiles setup.
+
+**Privacy:** This bundle's new dotfiles-sync sample intentionally does not
+include `.bash_history`, because terminal history may contain private tokens.
+If you already have `~/.dotfiles-sync`, the installer preserves it. Review
+its tracked files and Git remotes before enabling the timer.

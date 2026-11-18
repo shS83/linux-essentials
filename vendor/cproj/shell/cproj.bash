@@ -55,8 +55,12 @@ _cproj_sync_venv() {
 }
 
 cproj() {
+    # Only interactive navigation needs the Bash wrapper. All command-line
+    # options are passed directly to the executable (including new options).
+    # --recent uses fzf to return a directory and must keep navigation support.
     case ${1:-} in
-        --help|-h|--version|-V|--list|--refresh|--add|--config|--pull-all)
+        --recent) ;;
+        --*|-?*)
             command cproj "$@"
             return $?
             ;;

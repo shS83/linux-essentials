@@ -78,5 +78,13 @@ export PATH="$TEMP/bin:$PATH"
 # Source in a child shell so command/builtin state is isolated.
 bash -c 'source "$1"; before=$PWD; cproj --pull-all --dry-run >/dev/null; [[ $PWD == "$before" ]]' \
     bash "$ROOT/vendor/cproj/shell/cproj.bash"
-[[ $("$CATALOG" --version) == 0.2.0 ]]
-echo 'PASS: CPROJ --pull-all offline Git tests'
+[[ $("$CATALOG" --version) == 0.2.1 ]]
+# Ensure invalid future-looking options are forwarded to the CLI,
+# rather than consumed as a directory by the navigation wrapper.
+if err=$(bash -c 'source "$1"; cproj --definitely-invalid' bash "$ROOT/vendor/cproj/shell/cproj.bash" 2>&1); then
+    echo 'Unknown option unexpectedly succeeded' >&2
+    exit 1
+fi
+grep -q 'Unknown option: --definitely-invalid' <<< "$err"
+! grep -q 'Selected directory is unavailable' <<< "$err"
+echo 'PASS: CPROJ --pull-all offline Git tests' 
