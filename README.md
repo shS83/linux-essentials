@@ -241,9 +241,10 @@ by the installer. Entries are plaintext, and heuristic secret filtering is
 not a complete confidentiality guarantee. Wayland clipboard monitoring depends
 on the compositor.
 
-Dotfiles-sync is also included. The upstream service expects its executable at `/Tools/dotfiles-sync`, but
-this bundle adapts the user unit to `%h/.local/bin/dotfiles-sync` and repairs
-bare-repository staging. Set up the local bare Git repository (and remote, if
+Dotfiles-sync is also included. It installs an independent executable at
+`~/.local/bin/dotfiles-sync`, rather than creating a symlink to a development checkout
+or installing anything under `/Tools`. The systemd unit executes this installed
+user-local copy, and the installer repairs bare-repository staging. Set up the local bare Git repository (and remote, if
 used) before enabling the timer. The installer never creates GitHub
 repositories or starts this timer by default; use `--enable-services` only
 after verifying your dotfiles setup.
@@ -295,3 +296,12 @@ The existing `--upgrade-tools` option remains a supported alias for
 current GitHub default-branch versions. Existing personal configuration files
 are preserved, and user services are not newly enabled unless
 `--enable-services` is explicitly requested.
+
+## Dotfiles-sync installation paths
+
+The source checkout is kept in `~/Code/dotfiles-sync`, and the installer copies
+`dotfiles-sync` to `~/.local/bin/dotfiles-sync`. There is no symlink between
+these paths and nothing is installed or updated under `/Tools`. The
+user-level `dotfiles-sync.service` runs `%h/.local/bin/dotfiles-sync`.
+Use `--reinstall` to refresh the installed copy after changing the source.
+Old `/Tools/dotfiles-sync` files or symlinks are not deleted automatically.
