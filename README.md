@@ -1,4 +1,4 @@
-# Linux Essentials Bootstrap v0.4.2
+# Linux Essentials Bootstrap v0.5.2
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
@@ -37,6 +37,7 @@ The GitHub address is a placeholder, not a live project. You can also copy the e
 ./install.sh --profile all --dry-run        # preview, no installation
 ./install.sh --profile desktop             # ask for approval
 ./install.sh --profile developer --yes     # install without final confirmation
+./install.sh --profile developer --reinstall # reinstall already installed personal tools
 ./install.sh --profile server --aur        # permit AUR Byobu through yay/paru
 ./install.sh --list                         # all tools and their current status
 ./install.sh --export ~/essentials.list     # save installed tool IDs
@@ -270,3 +271,27 @@ its tracked files and Git remotes before enabling the timer.
 
   The installer prefers `~/Code/` checkouts; `--latest` retrieves a fresh
   temporary checkout, never `git pull` in your working directory.
+
+## v0.5.2 – Interactive [R] Reinstall
+
+After selecting a profile, the confirmation menu now includes **[R] Reinstall**.
+It reinstalls the selected personal tools (CPROJ, CmdVault, NADAR, SRVPULSE,
+GitPublish, Cmedia, dotfiles-sync and Clipvault) even when they are already
+installed. **[I] Install missing** retains the previous skip-if-installed
+behavior. Operating-system packages are not forcibly reinstalled; your package
+manager continues to handle their updates.
+
+To do the same without the interactive menu:
+
+```bash
+./install.sh --profile developer --reinstall
+./install.sh --profile developer --reinstall --latest # fetch current GitHub code
+./install.sh --profile developer --reinstall --latest --dry-run
+```
+
+The existing `--upgrade-tools` option remains a supported alias for
+`--reinstall`. Reinstall uses the bundled sources by default (or an explicit
+`--source` / local checkout where preferred); add `--latest` to fetch the
+current GitHub default-branch versions. Existing personal configuration files
+are preserved, and user services are not newly enabled unless
+`--enable-services` is explicitly requested.
