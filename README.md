@@ -236,8 +236,11 @@ clipvault --cli  # explicit terminal clipboard watcher
 Clipvault is NOT started automatically. It needs `uv`, Python >=3.15 (which
 uv may download), PySide6, and an existing PostgreSQL `clipvault` database and
 roles/schema. Its source uses `dbname=clipvault user=clipvault host=localhost`.
-No PostgreSQL setup, credential changes, or clipboard capture is performed
-by the installer. Entries are plaintext, and heuristic secret filtering is
+ClipVault now bootstraps its own local PostgreSQL dependencies, login role,
+database and clipboard table through the upstream `install.sh --db-only`.
+Existing databases, clipboard history and role passwords are preserved. A new
+role receives a random password stored in the current user's `~/.pgpass` with
+mode 0600. `--reinstall` repeats these idempotent checks. Entries are plaintext, and heuristic secret filtering is
 not a complete confidentiality guarantee. Wayland clipboard monitoring depends
 on the compositor.
 
@@ -305,3 +308,14 @@ these paths and nothing is installed or updated under `/Tools`. The
 user-level `dotfiles-sync.service` runs `%h/.local/bin/dotfiles-sync`.
 Use `--reinstall` to refresh the installed copy after changing the source.
 Old `/Tools/dotfiles-sync` files or symlinks are not deleted automatically.
+
+### ClipVault PostgreSQL bootstrap (new)
+
+The upstream `shS83/Clipvault/install.sh` now sets up PostgreSQL, the local
+`clipvault` role/database, and the `clipboard` table on supported distributions.
+Linux Essentials calls it with `--db-only` before installing the GUI.
+If your existing `~/Code/Clipvault` checkout has no `install.sh`, update it
+with `git pull --ff-only` or run Linux Essentials with `--latest`.
+For an existing GUI installation, `cd ~/Code/Clipvault && ./install.sh --db-only`
+initializes only the database. No credentials are reset without an explicit
+`--reset-db-password`. Protect the plaintext clipboard history.
