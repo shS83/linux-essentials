@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.5.1'
+readonly VERSION='0.5.2'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -76,7 +76,8 @@ Options:
       --aur               Permit AUR installs via existing yay/paru (Arch only)
       --force             Allow --export to overwrite an existing file
       --source NAME=DIR   Use a local project directory/file for a personal tool
-      --upgrade-tools     Reinstall selected personal tools even if present
+      --reinstall         Reinstall selected personal tools even if already installed
+      --upgrade-tools     Alias for --reinstall (backward compatible)
       --latest            Install personal tools from their latest GitHub default branch
                           (does not mutate your existing ~/Code checkouts)
       --shell-integration  Add the CPROJ source line to ~/.bashrc (opt-in)
@@ -120,7 +121,7 @@ parse_args() {
       -y|--yes) YES=1; shift ;;
       --aur) AUR=1; shift ;;
       --force) FORCE=1; shift ;;
-      --upgrade-tools) UPGRADE_TOOLS=1; shift ;;
+      --reinstall|--upgrade-tools) UPGRADE_TOOLS=1; shift ;;
       --latest) LATEST=1; shift ;;
       --shell-integration) SHELL_INTEGRATION=1; shift ;;
       --enable-services) ENABLE_SERVICES=1; shift ;;
@@ -477,10 +478,14 @@ confirm_install() {
   [[ -r /dev/tty ]] || die 'No interactive terminal. Use --yes to approve or --dry-run.'
   local ans tool list
   while :; do
-    printf '\n%b  [I] Install missing   [C] Customize   [Q] Quit  > %b' "$C_TEAL" "$C_RESET"
+    printf '\n%b  [I] Install missing   [R] Reinstall   [C] Customize   [Q] Quit  > %b' "$C_TEAL" "$C_RESET"
     IFS= read -r ans </dev/tty || exit 130
     case ${ans,,} in
       i|yes|y) return 0 ;;
+      r|reinstall)
+        UPGRADE_TOOLS=1
+        info 'Reinstalling selected personal tools (existing configurations preserved).'
+        return 0 ;;
       q|n|no) info 'No changes made.'; exit 0 ;;
       c)
         printf '  Toggle tools (comma-separated IDs, e.g. lsd,byobu): '
@@ -493,7 +498,7 @@ confirm_install() {
         done
         show_summary
         ;;
-      *) warn 'Choose I, C or Q' ;;
+      *) warn 'Choose I, R, C or Q' ;;
     esac
   done
 }
