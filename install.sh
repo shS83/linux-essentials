@@ -704,14 +704,12 @@ install_personal_tool() {
       for unit in dotfiles-sync.service dotfiles-sync.timer; do
         install -Dm644 -- "$src/$unit" "$HOME/.config/systemd/user/$unit" || return 1
       done
-      # Point the user unit at the user-local executable rather than /Tools.
+      # Normalize older service units; newer upstream already uses this path.
       sed -i 's|^ExecStart=/Tools/dotfiles-sync$|ExecStart=%h/.local/bin/dotfiles-sync|' \
         "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
       if [[ ! -e $HOME/.dotfiles-sync && -f $src/.dotfiles-sync ]]; then
         install -Dm600 -- "$SCRIPT_DIR/vendor/dotfiles-sync/.dotfiles-sync" "$HOME/.dotfiles-sync" || return 1
       fi
-      # The upstream service runs /Tools/dotfiles-sync. Never create a user
-      # systemd unit pointing at a command that is not actually there.
       # Initialize a machine-specific local bare repo only when absent.
       # No home-directory files are staged, and no GitHub repository is created.
       local df_host df_repo
@@ -724,7 +722,7 @@ install_personal_tool() {
       elif [[ $(git --git-dir="$df_repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
         error "dotfiles-sync: $df_repo exists but is not a bare Git repo"; return 1
       fi
-       if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+      if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
         systemctl --user daemon-reload || warn 'dotfiles-sync: user systemd reload unavailable'
         if (( ENABLE_SERVICES )); then
           systemctl --user enable --now dotfiles-sync.timer || return 1
