@@ -732,6 +732,15 @@ install_personal_tool() {
       fi
       ;;
     clipvault)
+      # Use the upstream installer for database dependencies and schema. The
+      # existing Linux Essentials GUI installer still handles its own overlay.
+      if [[ ! -f $src/install.sh ]]; then
+        error 'Clipvault checkout is missing install.sh; update ~/Code/Clipvault (git pull --ff-only) or use --latest'
+        return 1
+      fi
+      local -a cv_args=(--db-only)
+      (( ! YES )) || cv_args+=(--yes)
+      bash "$src/install.sh" "${cv_args[@]}" || return 1
       install_clipvault "$src" || return 1
       ;;
     srvpulse|cmdvault)
@@ -788,8 +797,8 @@ install_personal_tool() {
   case :$PATH: in *":$bindir:"*) ;; *) warn "Add $bindir to PATH to run personal tools." ;; esac
 }
 
-# Isolated Clipvault application installation. No DB initialization or services:
-# PostgreSQL credentials/schema must already be configured by the user.
+# Isolated Clipvault GUI installation; its PostgreSQL bootstrap is performed
+# separately by the upstream install.sh --db-only before this function.
 install_clipvault() {
   local src=$1 app="${XDG_DATA_HOME:-$HOME/.local/share}/linux-essentials/clipvault/app"
   local vendor="$SCRIPT_DIR/vendor/clipvault" f
@@ -829,7 +838,7 @@ fi
 exec "$app/.venv/bin/python" "$app/clipvault_gui.py" "$@"
 CLIPVAULT_LAUNCHER
   chmod 755 -- "$HOME/.local/bin/clipvault" || return 1
-  info 'Clipvault installed; run clipvault in a graphical session. PostgreSQL setup is not automated.'
+  info 'Clipvault installed; PostgreSQL setup completed by upstream installer.'
 }
 
 install_python_tool() {
