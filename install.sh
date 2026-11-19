@@ -227,6 +227,14 @@ personal_source() {
       fi
     done
   fi
+  # The local dotfiles-sync checkout is canonical when present. Both executable
+  # entry points will be symlinks to it, not independently copied scripts.
+  if [[ $id == dotfiles-sync && -f $HOME/Code/dotfiles-sync/dotfiles-sync &&
+        -f $HOME/Code/dotfiles-sync/dotfiles-sync.service &&
+        -f $HOME/Code/dotfiles-sync/dotfiles-sync.timer ]]; then
+    printf '%s' "$HOME/Code/dotfiles-sync"
+    return 0
+  fi
   # Clipvault is a complete project, not just its GUI overlay. Without --latest,
   # prefer an existing source checkout when available.
   if [[ $id == clipvault ]]; then
@@ -689,9 +697,15 @@ install_personal_tool() {
       [[ -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
         error 'dotfiles-sync source is incomplete'; return 1;
       }
-      # Correct upstream's bare-repo invocation to use explicit --git-dir
-      # and --work-tree; no global git config changes or automatic GitHub push.
-      install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
+      # One canonical executable: link to the user's source checkout when used.
+      # With a bundled/temporary --latest source, install one persistent copy,
+      # then link /Tools to it (never link to a temporary clone).
+      if [[ $src == "$HOME/Code/dotfiles-sync" ]]; then
+        ln -sfnT -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
+      else
+        [[ ! -L $bindir/dotfiles-sync ]] || rm -- "$bindir/dotfiles-sync" || return 1
+        install -Dm755 -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
+      fi
       for unit in dotfiles-sync.service dotfiles-sync.timer; do
         install -Dm644 -- "$src/$unit" "$HOME/.config/systemd/user/$unit" || return 1
       done
@@ -706,7 +720,8 @@ install_personal_tool() {
       # Initialize a machine-specific local bare repo only when absent.
       # No home-directory files are staged, and no GitHub repository is created.
       local df_host df_repo
-      df_host=$(hostname -s)
+      df_host=$(uname -n)
+      df_host=${df_host%%.*}
       df_repo="$HOME/.dotfiles-sync-${df_host}.git"
       if [[ ! -e $df_repo ]]; then
         git init --bare --initial-branch=main "$df_repo" || return 1
@@ -717,7 +732,7 @@ install_personal_tool() {
       # Compatibility path is optional; the installed unit below uses %h
       # and therefore needs no system-wide writable directory.
       if [[ -d /Tools && -w /Tools ]]; then
-        install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" /Tools/dotfiles-sync || return 1
+        ln -sfnT -- "$bindir/dotfiles-sync" /Tools/dotfiles-sync || return 1
       fi
       if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
         systemctl --user daemon-reload || warn 'dotfiles-sync: user systemd reload unavailable'
