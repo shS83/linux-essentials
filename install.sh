@@ -94,7 +94,7 @@ Notes:
   • Clipvault requires a graphical session, PostgreSQL and Python >=3.15 via uv.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
-  • dotfiles-sync installs a user-local launcher and optionally /Tools integration.
+  • dotfiles-sync installs a standalone user-local executable (no /Tools copy or symlink).
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Cmedia V2 installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
@@ -697,15 +697,10 @@ install_personal_tool() {
       [[ -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
         error 'dotfiles-sync source is incomplete'; return 1;
       }
-      # One canonical executable: link to the user's source checkout when used.
-      # With a bundled/temporary --latest source, install one persistent copy,
-      # then link /Tools to it (never link to a temporary clone).
-      if [[ $src == "$HOME/Code/dotfiles-sync" ]]; then
-        ln -sfnT -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
-      else
-        [[ ! -L $bindir/dotfiles-sync ]] || rm -- "$bindir/dotfiles-sync" || return 1
-        install -Dm755 -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
-      fi
+      # Always install an independent file, never a symlink to the development
+      # checkout. Remove an old symlink first to avoid following it into source.
+      [[ ! -L $bindir/dotfiles-sync ]] || rm -- "$bindir/dotfiles-sync" || return 1
+      install -Dm755 -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
       for unit in dotfiles-sync.service dotfiles-sync.timer; do
         install -Dm644 -- "$src/$unit" "$HOME/.config/systemd/user/$unit" || return 1
       done
@@ -729,12 +724,7 @@ install_personal_tool() {
       elif [[ $(git --git-dir="$df_repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
         error "dotfiles-sync: $df_repo exists but is not a bare Git repo"; return 1
       fi
-      # Compatibility path is optional; the installed unit below uses %h
-      # and therefore needs no system-wide writable directory.
-      if [[ -d /Tools && -w /Tools ]]; then
-        ln -sfnT -- "$bindir/dotfiles-sync" /Tools/dotfiles-sync || return 1
-      fi
-      if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+       if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
         systemctl --user daemon-reload || warn 'dotfiles-sync: user systemd reload unavailable'
         if (( ENABLE_SERVICES )); then
           systemctl --user enable --now dotfiles-sync.timer || return 1
