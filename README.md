@@ -37,6 +37,7 @@ The GitHub address is a placeholder, not a live project. You can also copy the e
 ./install.sh --profile all --dry-run        # preview, no installation
 ./install.sh --profile desktop             # ask for approval
 ./install.sh --profile developer --yes     # install without final confirmation
+./install.sh --profile developer --reinstall # reinstall already installed personal tools
 ./install.sh --profile server --aur        # permit AUR Byobu through yay/paru
 ./install.sh --list                         # all tools and their current status
 ./install.sh --export ~/essentials.list     # save installed tool IDs
@@ -238,14 +239,18 @@ clipvault --cli  # explicit terminal clipboard watcher
 Clipvault is NOT started automatically. It needs `uv`, Python >=3.15 (which
 uv may download), PySide6, and an existing PostgreSQL `clipvault` database and
 roles/schema. Its source uses `dbname=clipvault user=clipvault host=localhost`.
-No PostgreSQL setup, credential changes, or clipboard capture is performed
-by the installer. Entries are plaintext, and heuristic secret filtering is
+ClipVault now bootstraps its own local PostgreSQL dependencies, login role,
+database and clipboard table through the upstream `install.sh --db-only`.
+Existing databases, clipboard history and role passwords are preserved. A new
+role receives a random password stored in the current user's `~/.pgpass` with
+mode 0600. `--reinstall` repeats these idempotent checks. Entries are plaintext, and heuristic secret filtering is
 not a complete confidentiality guarantee. Wayland clipboard monitoring depends
 on the compositor.
 
-Dotfiles-sync is also included. The upstream service expects its executable at `/Tools/dotfiles-sync`, but
-this bundle adapts the user unit to `%h/.local/bin/dotfiles-sync` and repairs
-bare-repository staging. Set up the local bare Git repository (and remote, if
+Dotfiles-sync is also included. It installs an independent executable at
+`~/.local/bin/dotfiles-sync`, rather than creating a symlink to a development checkout
+or installing anything under `/Tools`. The systemd unit executes this installed
+user-local copy, and the installer repairs bare-repository staging. Set up the local bare Git repository (and remote, if
 used) before enabling the timer. The installer never creates GitHub
 repositories or starts this timer by default; use `--enable-services` only
 after verifying your dotfiles setup.
@@ -273,3 +278,47 @@ its tracked files and Git remotes before enabling the timer.
 
   The installer prefers `~/Code/` checkouts; `--latest` retrieves a fresh
   temporary checkout, never `git pull` in your working directory.
+
+## v0.5.2 – Interactive [R] Reinstall
+
+After selecting a profile, the confirmation menu now includes **[R] Reinstall**.
+It reinstalls the selected personal tools (CPROJ, CmdVault, NADAR, SRVPULSE,
+GitPublish, Cmedia, dotfiles-sync and Clipvault) even when they are already
+installed. **[I] Install missing** retains the previous skip-if-installed
+behavior. Operating-system packages are not forcibly reinstalled; your package
+manager continues to handle their updates.
+
+To do the same without the interactive menu:
+
+```bash
+./install.sh --profile developer --reinstall
+./install.sh --profile developer --reinstall --latest # fetch current GitHub code
+./install.sh --profile developer --reinstall --latest --dry-run
+```
+
+The existing `--upgrade-tools` option remains a supported alias for
+`--reinstall`. Reinstall uses the bundled sources by default (or an explicit
+`--source` / local checkout where preferred); add `--latest` to fetch the
+current GitHub default-branch versions. Existing personal configuration files
+are preserved, and user services are not newly enabled unless
+`--enable-services` is explicitly requested.
+
+## Dotfiles-sync installation paths
+
+The source checkout is kept in `~/Code/dotfiles-sync`, and the installer copies
+`dotfiles-sync` to `~/.local/bin/dotfiles-sync`. There is no symlink between
+these paths and nothing is installed or updated under `/Tools`. The
+user-level `dotfiles-sync.service` runs `%h/.local/bin/dotfiles-sync`.
+Use `--reinstall` to refresh the installed copy after changing the source.
+Old `/Tools/dotfiles-sync` files or symlinks are not deleted automatically.
+
+### ClipVault PostgreSQL bootstrap (new)
+
+The upstream `shS83/Clipvault/install.sh` now sets up PostgreSQL, the local
+`clipvault` role/database, and the `clipboard` table on supported distributions.
+Linux Essentials calls it with `--db-only` before installing the GUI.
+If your existing `~/Code/Clipvault` checkout has no `install.sh`, update it
+with `git pull --ff-only` or run Linux Essentials with `--latest`.
+For an existing GUI installation, `cd ~/Code/Clipvault && ./install.sh --db-only`
+initializes only the database. No credentials are reset without an explicit
+`--reset-db-password`. Protect the plaintext clipboard history.

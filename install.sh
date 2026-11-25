@@ -76,7 +76,8 @@ Options:
       --aur               Permit AUR installs via existing yay/paru (Arch only)
       --force             Allow --export to overwrite an existing file
       --source NAME=DIR   Use a local project directory/file for a personal tool
-      --upgrade-tools     Reinstall selected personal tools even if present
+      --reinstall         Reinstall selected personal tools even if already installed
+      --upgrade-tools     Alias for --reinstall (backward compatible)
       --latest            Install personal tools from their latest GitHub default branch
                           (does not mutate your existing ~/Code checkouts)
       --shell-integration  Add the CPROJ source line to ~/.bashrc (opt-in)
@@ -93,7 +94,7 @@ Notes:
   • Clipvault requires a graphical session, PostgreSQL and Python >=3.15 via uv.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
-  • dotfiles-sync installs a user-local launcher and optionally /Tools integration.
+  • dotfiles-sync installs a standalone user-local executable (no /Tools copy or symlink).
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
   • Taskman builds taskman and taskman-cli; its PostgreSQL server/database must be configured separately.
   • MusiK installs its Python/Qt6 application in an isolated uv environment.
@@ -122,7 +123,7 @@ parse_args() {
       -y|--yes) YES=1; shift ;;
       --aur) AUR=1; shift ;;
       --force) FORCE=1; shift ;;
-      --upgrade-tools) UPGRADE_TOOLS=1; shift ;;
+      --reinstall|--upgrade-tools) UPGRADE_TOOLS=1; shift ;;
       --latest) LATEST=1; shift ;;
       --shell-integration) SHELL_INTEGRATION=1; shift ;;
       --enable-services) ENABLE_SERVICES=1; shift ;;
@@ -235,6 +236,14 @@ personal_source() {
         printf '%s' "$candidate"; return 0
       fi
     done
+  fi
+  # The local dotfiles-sync checkout is canonical when present. Both executable
+  # entry points will be symlinks to it, not independently copied scripts.
+  if [[ $id == dotfiles-sync && -f $HOME/Code/dotfiles-sync/dotfiles-sync &&
+        -f $HOME/Code/dotfiles-sync/dotfiles-sync.service &&
+        -f $HOME/Code/dotfiles-sync/dotfiles-sync.timer ]]; then
+    printf '%s' "$HOME/Code/dotfiles-sync"
+    return 0
   fi
   # Clipvault is a complete project, not just its GUI overlay. Without --latest,
   # prefer an existing source checkout when available.
@@ -514,10 +523,14 @@ confirm_install() {
   [[ -r /dev/tty ]] || die 'No interactive terminal. Use --yes to approve or --dry-run.'
   local ans tool list
   while :; do
-    printf '\n%b  [I] Install missing   [C] Customize   [Q] Quit  > %b' "$C_TEAL" "$C_RESET"
+    printf '\n%b  [I] Install missing   [R] Reinstall   [C] Customize   [Q] Quit  > %b' "$C_TEAL" "$C_RESET"
     IFS= read -r ans </dev/tty || exit 130
     case ${ans,,} in
       i|yes|y) return 0 ;;
+      r|reinstall)
+        UPGRADE_TOOLS=1
+        info 'Reinstalling selected personal tools (existing configurations preserved).'
+        return 0 ;;
       q|n|no) info 'No changes made.'; exit 0 ;;
       c)
         printf '  Toggle tools (comma-separated IDs, e.g. lsd,byobu): '
@@ -530,7 +543,7 @@ confirm_install() {
         done
         show_summary
         ;;
-      *) warn 'Choose I, C or Q' ;;
+      *) warn 'Choose I, R, C or Q' ;;
     esac
   done
 }
@@ -760,35 +773,30 @@ install_personal_tool() {
       [[ -f $src/dotfiles-sync && -f $src/dotfiles-sync.service && -f $src/dotfiles-sync.timer ]] || {
         error 'dotfiles-sync source is incomplete'; return 1;
       }
-      # Correct upstream's bare-repo invocation to use explicit --git-dir
-      # and --work-tree; no global git config changes or automatic GitHub push.
-      install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
+      # Always install an independent file, never a symlink to the development
+      # checkout. Remove an old symlink first to avoid following it into source.
+      [[ ! -L $bindir/dotfiles-sync ]] || rm -- "$bindir/dotfiles-sync" || return 1
+      install -Dm755 -- "$src/dotfiles-sync" "$bindir/dotfiles-sync" || return 1
       for unit in dotfiles-sync.service dotfiles-sync.timer; do
         install -Dm644 -- "$src/$unit" "$HOME/.config/systemd/user/$unit" || return 1
       done
-      # Point the user unit at the user-local executable rather than /Tools.
+      # Normalize older service units; newer upstream already uses this path.
       sed -i 's|^ExecStart=/Tools/dotfiles-sync$|ExecStart=%h/.local/bin/dotfiles-sync|' \
         "$HOME/.config/systemd/user/dotfiles-sync.service" || return 1
       if [[ ! -e $HOME/.dotfiles-sync && -f $src/.dotfiles-sync ]]; then
         install -Dm600 -- "$SCRIPT_DIR/vendor/dotfiles-sync/.dotfiles-sync" "$HOME/.dotfiles-sync" || return 1
       fi
-      # The upstream service runs /Tools/dotfiles-sync. Never create a user
-      # systemd unit pointing at a command that is not actually there.
       # Initialize a machine-specific local bare repo only when absent.
       # No home-directory files are staged, and no GitHub repository is created.
       local df_host df_repo
-      df_host=$(hostname -s)
+      df_host=$(uname -n)
+      df_host=${df_host%%.*}
       df_repo="$HOME/.dotfiles-sync-${df_host}.git"
       if [[ ! -e $df_repo ]]; then
         git init --bare --initial-branch=main "$df_repo" || return 1
         git --git-dir="$df_repo" config status.showUntrackedFiles no || return 1
       elif [[ $(git --git-dir="$df_repo" rev-parse --is-bare-repository 2>/dev/null || :) != true ]]; then
         error "dotfiles-sync: $df_repo exists but is not a bare Git repo"; return 1
-      fi
-      # Compatibility path is optional; the installed unit below uses %h
-      # and therefore needs no system-wide writable directory.
-      if [[ -d /Tools && -w /Tools ]]; then
-        install -Dm755 -- "$SCRIPT_DIR/vendor/dotfiles-sync/dotfiles-sync" /Tools/dotfiles-sync || return 1
       fi
       if command -v systemctl >/dev/null 2>&1 && [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
         systemctl --user daemon-reload || warn 'dotfiles-sync: user systemd reload unavailable'
@@ -800,6 +808,15 @@ install_personal_tool() {
       fi
       ;;
     clipvault)
+      # Use the upstream installer for database dependencies and schema. The
+      # existing Linux Essentials GUI installer still handles its own overlay.
+      if [[ ! -f $src/install.sh ]]; then
+        error 'Clipvault checkout is missing install.sh; update ~/Code/Clipvault (git pull --ff-only) or use --latest'
+        return 1
+      fi
+      local -a cv_args=(--db-only)
+      (( ! YES )) || cv_args+=(--yes)
+      bash "$src/install.sh" "${cv_args[@]}" || return 1
       install_clipvault "$src" || return 1
       ;;
     srvpulse|cmdvault)
@@ -856,8 +873,8 @@ install_personal_tool() {
   case :$PATH: in *":$bindir:"*) ;; *) warn "Add $bindir to PATH to run personal tools." ;; esac
 }
 
-# Isolated Clipvault application installation. No DB initialization or services:
-# PostgreSQL credentials/schema must already be configured by the user.
+# Isolated Clipvault GUI installation; its PostgreSQL bootstrap is performed
+# separately by the upstream install.sh --db-only before this function.
 install_clipvault() {
   local src=$1 app="${XDG_DATA_HOME:-$HOME/.local/share}/linux-essentials/clipvault/app"
   local vendor="$SCRIPT_DIR/vendor/clipvault" f
@@ -897,7 +914,7 @@ fi
 exec "$app/.venv/bin/python" "$app/clipvault_gui.py" "$@"
 CLIPVAULT_LAUNCHER
   chmod 755 -- "$HOME/.local/bin/clipvault" || return 1
-  info 'Clipvault installed; run clipvault in a graphical session. PostgreSQL setup is not automated.'
+  info 'Clipvault installed; PostgreSQL setup completed by upstream installer.'
 }
 
 install_python_tool() {

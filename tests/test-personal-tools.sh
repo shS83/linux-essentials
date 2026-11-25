@@ -139,6 +139,20 @@ check grep -q 'source "\$HOME/.config/cproj/cproj.bash"' "$HOME/.bashrc"
 check grep -q 'MOCK-SRVPULSE' <("$HOME/.local/bin/srvpulse")
 check grep -q 'gitpublish' <("$HOME/.local/bin/gitpublish" --help)
 
+# Default installation must still skip installed personal tools.
+printf '#!/usr/bin/env bash\necho OUTDATED\n' > "$HOME/.local/bin/gitpublish"
+chmod +x "$HOME/.local/bin/gitpublish"
+printf 'gitpublish\n' > "$TMP/only-gitpublish.list"
+"$ROOT/install.sh" --import "$TMP/only-gitpublish.list" --yes > "$TMP/skip.out"
+check grep -q '^OUTDATED$' <("$HOME/.local/bin/gitpublish")
+
+# Reinstall must force replacement, and its dry run must preview the action.
+preview=$("$ROOT/install.sh" --import "$TMP/only-gitpublish.list" --reinstall --dry-run)
+check grep -q 'Personal install:.*gitpublish' <<< "$preview"
+"$ROOT/install.sh" --import "$TMP/only-gitpublish.list" --reinstall --yes > "$TMP/reinstall.out"
+check cmp "$ROOT/vendor/gitpublish/gitpublish" "$HOME/.local/bin/gitpublish"
+check grep -Fq '[R] Reinstall' "$ROOT/install.sh"
+
 # Do not overwrite configs or duplicate shell integration lines.
 printf 'custom=true\n' > "$HOME/.config/cproj/cproj.conf"
 "$ROOT/install.sh" --import "$TMP/local.list" --yes --shell-integration --enable-services \

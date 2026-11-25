@@ -1,40 +1,52 @@
 #!/usr/bin/env bash
-# Linux Essentials compatibility fix for dotfiles-sync's external bare Git repository.
+# Sync only paths explicitly listed in ~/.dotfiles-sync to a host-specific bare Git repo.
 set -Eeuo pipefail
-host=$(hostname -s)
-repo="${DOTFILES_SYNC_REPO:-$HOME/.dotfiles-sync-${host}.git}"
+
+host=$(uname -n)
+host=${host%%.*}
+repo=${DOTFILES_SYNC_REPO:-"$HOME/.dotfiles-sync-${host}.git"}
 config="$HOME/.dotfiles-sync"
-[[ -f $config ]] || { echo "dotfiles-sync: missing $config" >&2; exit 1; }
-if [[ ! -d $repo ]]; then
-  echo "dotfiles-sync: initialize a bare repository: git init --bare --initial-branch=main '$repo'" >&2
-  exit 1
-fi
-gitargs=(--git-dir="$repo" --work-tree="$HOME")
-[[ $(git --git-dir="$repo" rev-parse --is-bare-repository) == true ]] || {
-  echo 'dotfiles-sync: expected a bare Git repository' >&2; exit 1;
+
+[[ -f $config ]] || { printf 'dotfiles-sync: missing configuration: %s\n' "$config" >&2; exit 1; }
+[[ -d $repo ]] || { printf 'dotfiles-sync: missing bare repository: %s\n' "$repo" >&2; exit 1; }
+[[ $(git --git-dir="$repo" rev-parse --is-bare-repository 2>/dev/null) == true ]] || {
+  printf 'dotfiles-sync: not a bare Git repository: %s\n' "$repo" >&2; exit 1;
 }
-# Only explicitly listed paths are staged; no recursive HOME discovery.
+
+# -C is essential: --work-tree does not change Git's pathspec base from CWD.
+# -f is essential: the installer deliberately ignores all new HOME paths by
+# default; the whitelist ~/.dotfiles-sync is our explicit opt-in list.
+git_home=(git -C "$HOME" --git-dir="$repo" --work-tree="$HOME")
 count=0
-while IFS= read -r f || [[ -n $f ]]; do
-  [[ $f == '' || $f == \#* ]] && continue
-  [[ $f != /* && $f != *'..'* && $f != -* ]] || {
-    printf 'dotfiles-sync: unsafe path skipped: %s\n' "$f" >&2; continue;
-  }
-  if [[ -f $HOME/$f ]]; then
-    git "${gitargs[@]}" add -- "$f"
-    ((count+=1))
+while IFS= read -r path || [[ -n $path ]]; do
+  path=${path%$'\r'}
+  [[ -n $path && $path != \#* ]] || continue
+  case $path in
+    /*|-*|.|..|../*|*/../*|*/..|./*|*/./*|*/.|*/|*'//'*)
+      printf 'dotfiles-sync: skipped unsafe path: %q\n' "$path" >&2
+      continue ;;
+  esac
+  if [[ ! -f $HOME/$path && ! -L $HOME/$path ]]; then
+    printf 'dotfiles-sync: missing path, skipped: %q\n' "$path" >&2
+    continue
   fi
+  "${git_home[@]}" add -f -- "$path"
+  ((count+=1))
 done < "$config"
-if git "${gitargs[@]}" diff --cached --quiet; then
-  echo 'dotfiles-sync: no changes'
+
+if "${git_home[@]}" diff --cached --quiet; then
+  printf 'dotfiles-sync: no changes (%d paths checked)\n' "$count"
   exit 0
 fi
-if ! git "${gitargs[@]}" commit -m "Auto-sync @ ${host} -- $(date +%Y-%m-%d_%H:%M)"; then
-  echo 'dotfiles-sync: commit failed; configure your Git identity' >&2
+if ! "${git_home[@]}" commit -m "Auto-sync @ ${host} -- $(date +%Y-%m-%d_%H:%M)"; then
+  printf 'dotfiles-sync: commit failed; check Git identity/signing\n' >&2
   exit 1
 fi
-if git "${gitargs[@]}" remote get-url origin >/dev/null 2>&1; then
-  git "${gitargs[@]}" push
+if "${git_home[@]}" remote get-url origin >/dev/null 2>&1; then
+  branch=$("${git_home[@]}" symbolic-ref --quiet --short HEAD) || {
+    printf 'dotfiles-sync: cannot push detached HEAD\n' >&2; exit 1;
+  }
+  "${git_home[@]}" push -u origin "HEAD:$branch"
 else
-  echo 'dotfiles-sync: committed locally (no origin remote, push skipped)'
+  printf 'dotfiles-sync: committed locally (no origin remote; push skipped)\n'
 fi
