@@ -4,7 +4,7 @@
 set -o pipefail
 set -u
 
-readonly VERSION='0.5.1'
+readonly VERSION='0.5.2'
 readonly SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_NAME=${0##*/}
 
@@ -13,10 +13,10 @@ declare -a TOOLS=(
   fzf fd ripgrep bat eza lsd yazi
   btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq
   git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace
-  cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault
-  uv chafa ffmpeg python3
+  cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault taskman musik
+  uv chafa ffmpeg python3 cmake g++ zlib-dev postgresql-dev
 )
-declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault)
+declare -a PERSONAL_TOOLS=(cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault taskman musik)
 declare -A TOOL_SOURCES=()
 declare -A KNOWN=() SELECTED=() STATUS=() PACKAGE=()
 for _tool in "${TOOLS[@]}"; do KNOWN[$_tool]=1; done
@@ -88,13 +88,15 @@ Notes:
   • Missing tools are installed from configured system repositories.
   • Arch's Byobu is normally an AUR package; --aur is opt-in.
   • On Debian/Ubuntu, the fd/bat binaries may be named fdfind/batcat.
-  • Bundled: CPROJ, NADAR, SRVPULSE, GitPublish, Cmedia V2 renderer, Clipvault GUI, and CmdVault logo.
+  • Bundled: CPROJ, NADAR, SRVPULSE, GitPublish, Taskman Neon, Cmedia V2 renderer, Clipvault GUI, and CmdVault logo.
   • CmdVault full sources come from ~/Code/cmdvault or GitHub; its exact logo is bundled.
   • Clipvault requires a graphical session, PostgreSQL and Python >=3.15 via uv.
   • Cmedia requires git, uv, python3, ffmpeg and chafa; uv handles Python >=3.13.
   • GitPublish requires git, gh and a one-time gh auth login.
   • dotfiles-sync installs a user-local launcher and optionally /Tools integration.
   • Personal tools install under ~/.local/bin (srvpulse uses an isolated venv).
+  • Taskman builds taskman and taskman-cli; its PostgreSQL server/database must be configured separately.
+  • MusiK installs its Python/Qt6 application in an isolated uv environment.
   • Cmedia V2 installs its launcher via uv tool into ~/.local/bin/cmedia.
   • Shell integration and systemd activation are explicit opt-ins.
   • The script never adds package repositories.
@@ -129,7 +131,7 @@ parse_args() {
         local spec=$2 name path
         [[ $spec == *=* ]] || die '--source requires NAME=DIR'
         name=${spec%%=*}; path=${spec#*=}
-        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault) ;; *) die "Unknown personal tool: $name" ;; esac
+        case $name in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault|taskman|musik) ;; *) die "Unknown personal tool: $name" ;; esac
         [[ -n $path ]] || die '--source requires a nonempty directory or file path'
         TOOL_SOURCES[$name]=$path
         shift 2 ;;
@@ -191,12 +193,20 @@ package_for() {
     dnf:openssh) printf 'openssh-clients' ;;
     pacman:byobu) printf 'AUR:byobu' ;;
     pacman:gh) printf 'github-cli' ;;
+    pacman:g++) printf 'gcc' ;;
+    dnf:g++) printf 'gcc-c++' ;;
+    apt:postgresql-dev) printf 'libpq-dev' ;;
+    dnf:postgresql-dev) printf 'libpq-devel' ;;
+    pacman:postgresql-dev) printf 'postgresql-libs' ;;
+    apt:zlib-dev) printf 'zlib1g-dev' ;;
+    dnf:zlib-dev) printf 'zlib-devel' ;;
+    pacman:zlib-dev) printf 'zlib' ;;
     *) printf '%s' "$id" ;;
   esac
 }
 
 is_personal_tool() {
-  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault) return 0 ;; *) return 1 ;; esac
+  case $1 in cproj|cmdvault|nadar|srvpulse|gitpublish|cmedia|dotfiles-sync|clipvault|taskman|musik) return 0 ;; *) return 1 ;; esac
 }
 
 personal_source() {
@@ -235,6 +245,20 @@ personal_source() {
       fi
     done
   fi
+  if [[ $id == taskman ]]; then
+    for candidate in "$HOME/Code/taskman" "/Tools/taskman"; do
+      if [[ -f $candidate/CMakeLists.txt && -f $candidate/neon.cpp && -f $candidate/logo.png ]]; then
+        printf '%s' "$candidate"; return 0
+      fi
+    done
+  fi
+  if [[ $id == musik ]]; then
+    for candidate in "$HOME/Code/MusiK" "/Tools/MusiK"; do
+      if [[ -f $candidate/musik.py && -f $candidate/pyproject.toml && -f $candidate/uv.lock ]]; then
+        printf '%s' "$candidate"; return 0
+      fi
+    done
+  fi
   base="$SCRIPT_DIR/vendor/$id"
   if [[ -d $base ]]; then
     case $id in
@@ -243,6 +267,8 @@ personal_source() {
       cmedia) [[ -f $base/install.sh && -f $base/patch_cmedia.py ]] || return 1 ;;
       dotfiles-sync) [[ -f $base/dotfiles-sync && -f $base/dotfiles-sync.timer && -f $base/dotfiles-sync.service ]] || return 1 ;;
       clipvault) [[ -f $base/clipvault_gui.py && -f $base/clipvault.png ]] || return 1 ;;
+      taskman) [[ -f $base/CMakeLists.txt && -f $base/neon.cpp && -f $base/logo.png ]] || return 1 ;;
+      musik) [[ -f $base/musik.py && -f $base/pyproject.toml && -f $base/uv.lock ]] || return 1 ;;
     esac
     printf '%s' "$base"
     return 0
@@ -337,9 +363,9 @@ select_profile() {
     minimal)
       pick='git curl wget unzip zip openssh fzf fd ripgrep bat eza lsd pv jq' ;;
     desktop)
-      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault' ;;
+      pick='git gh curl wget unzip zip openssh rsync fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq tmux byobu tealdeer cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault taskman musik' ;;
     developer)
-      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault' ;;
+      pick='git gh curl wget openssh rsync unzip zip fzf fd ripgrep bat eza lsd yazi btop htop fastfetch hyfetch pv zoxide duf dust ncdu jq git-delta lazygit tmux byobu shellcheck shfmt tealdeer lsof nmap strace cproj cmdvault nadar srvpulse gitpublish cmedia dotfiles-sync clipvault taskman musik' ;;
     server)
       pick='git curl wget openssh rsync unzip zip fzf fd ripgrep bat lsd pv htop ncdu jq tmux byobu lsof nmap strace srvpulse' ;;
     all)
@@ -460,6 +486,17 @@ resolve_dependencies() {
   fi
   if [[ -n ${SELECTED[clipvault]:-} ]]; then
     SELECTED[git]=1
+    SELECTED[uv]=1
+    SELECTED[python3]=1
+  fi
+  if [[ -n ${SELECTED[taskman]:-} ]]; then
+    SELECTED[git]=1
+    SELECTED[cmake]=1
+    SELECTED[g++]=1
+    SELECTED[zlib-dev]=1
+    SELECTED[postgresql-dev]=1
+  fi
+  if [[ -n ${SELECTED[musik]:-} ]]; then
     SELECTED[uv]=1
     SELECTED[python3]=1
   fi
@@ -593,6 +630,10 @@ source_for_install() {
   local id=$1
   if [[ -n ${TOOL_SOURCES[$id]:-} ]]; then
     personal_source "$id"
+  elif [[ $id == taskman ]]; then
+    personal_source "$id"
+  elif [[ $id == musik ]]; then
+    personal_source "$id"
   elif (( LATEST )); then
     fetch_latest_personal_source "$id"
   elif [[ $id == clipvault || $id == cmdvault ]]; then
@@ -616,6 +657,41 @@ install_personal_tool() {
   local id=$1 src=$2 bindir="$HOME/.local/bin"
   mkdir -p -- "$bindir" || return 1
   case $id in
+    taskman)
+      [[ -d $src && -f $src/CMakeLists.txt && -f $src/neon.cpp && -f $src/main.cpp && -f $src/logo.png ]] || {
+        error 'Taskman source requires CMakeLists.txt, main.cpp, neon.cpp and logo.png'; return 1;
+      }
+      local taskman_data="$HOME/.local/share/linux-essentials/taskman"
+      local taskman_build="$taskman_data/build"
+      mkdir -p -- "$taskman_data" || return 1
+      cmake -S "$src" -B "$taskman_build" -DCMAKE_BUILD_TYPE=Release || return 1
+      cmake --build "$taskman_build" --parallel 2 || return 1
+      [[ -x $taskman_build/taskman && -x $taskman_build/taskman-cli && -s $taskman_build/logo.png ]] || {
+        error 'Taskman build did not produce both executables and logo.png'; return 1;
+      }
+      install -Dm755 -- "$taskman_build/taskman" "$bindir/taskman" || return 1
+      install -Dm755 -- "$taskman_build/taskman-cli" "$bindir/taskman-cli" || return 1
+      info 'Taskman installed: taskman (Neon TUI) and taskman-cli (legacy CLI). Configure PostgreSQL before launching taskman.'
+      ;;
+    musik)
+      [[ -d $src && -f $src/musik.py && -f $src/pyproject.toml && -f $src/uv.lock && -d $src/musik ]] || {
+        error 'MusiK source requires musik.py, pyproject.toml, uv.lock and the musik package'; return 1;
+      }
+      command -v uv >/dev/null 2>&1 || { error 'MusiK requires uv'; return 1; }
+      local musik_app="$HOME/.local/share/linux-essentials/musik"
+      mkdir -p -- "$musik_app" || return 1
+      for file in musik.py pyproject.toml uv.lock; do
+        install -Dm644 -- "$src/$file" "$musik_app/$file" || return 1
+      done
+      cp -a -- "$src/musik" "$musik_app/" || return 1
+      [[ ! -d $src/shaders ]] || cp -a -- "$src/shaders" "$musik_app/" || return 1
+      [[ ! -f $src/MusiK-logo.png ]] || install -Dm644 -- "$src/MusiK-logo.png" "$musik_app/MusiK-logo.png" || return 1
+      uv sync --project "$musik_app" --frozen --no-install-project || return 1
+      [[ -x $musik_app/.venv/bin/python ]] || { error 'MusiK uv environment was not created'; return 1; }
+      printf '#!/usr/bin/env bash\napp="${XDG_DATA_HOME:-$HOME/.local/share}/linux-essentials/musik"\nexec "$app/.venv/bin/python" "$app/musik.py" "$@"\n' > "$bindir/musik" || return 1
+      chmod 755 -- "$bindir/musik" || return 1
+      info 'MusiK installed; launch with musik.'
+      ;;
     cproj)
       [[ -d $src && -f $src/cproj && -f $src/shell/cproj.bash ]] || {
         error 'CPROJ source requires cproj and shell/cproj.bash'; return 1;

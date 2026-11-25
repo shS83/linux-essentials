@@ -15,6 +15,8 @@ a version lock. `--latest` may fetch newer commits on later dates.
 | Cmedia | shS83/cmedia | root | 61f0d4c6ed5c41e76f5e3679c6eef88eb834ec1c |
 | dotfiles-sync | shS83/dotfiles-sync | root | d538b8bbec45dd8fa347e9b90f26790028cc2982 |
 | Clipvault | shS83/Clipvault | root | d2cc40f393eb8db7a89a13b28962d03f72f9287e |
+| Taskman | local `~/Code/taskman` snapshot | bundled | N/A |
+| MusiK | local `~/Code/MusiK` snapshot | bundled | N/A |
 
 The bundled Clipvault GUI is the 2026-11-16 statusbar fix from the user's
 previous package. The bundled dotfiles-sync launcher corrects the upstream
@@ -24,6 +26,10 @@ outside `vendor/clipvault/` may be older than the branch heads above;
 
 Do not run this bootstrap as root, and review source changes and commit history
 before rolling out latest versions across important computers.
+
+Taskman and MusiK are bundled from the user's local project checkouts. Taskman
+builds the Neon TUI and legacy CLI; MusiK is installed from its included
+`pyproject.toml` and `uv.lock`. Neither project is refreshed by `--latest`.
 
 ### Version 0.5.1 verification
 

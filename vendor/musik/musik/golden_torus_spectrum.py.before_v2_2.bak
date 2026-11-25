@@ -1,0 +1,63 @@
+"""Spectrum conditioning for Golden Torus v2.1 (no Qt or GL required).
+
+MusiK audio.py supplies logarithmically spaced frequency levels on [0, 1].
+This module turns those bands into a smoothly periodic one-dimensional ring
+profile. A 512 x 1 GPU texture stores that profile for ModernGL.
+"""
+from __future__ import annotations
+
+import numpy as np
+
+SPECTRUM_BANDS = 48
+PROFILE_SAMPLES = 512
+
+
+def prepare_bands(levels, count: int = SPECTRUM_BANDS) -> np.ndarray:
+	"""Map a fresh FFT spectrum to visible, smoothly varying 0..1 elevations."""
+	values = np.asarray(levels, dtype=np.float32).reshape(-1)
+	if values.size == 0:
+		return np.zeros(count, dtype=np.float32)
+	values = np.clip(np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+	if values.size != count:
+		# MusiK lets the user select FFT band density, still logarithmic.
+		# Interpolate in log-frequency/band index, not raw Hz.
+		x_old = (np.arange(values.size, dtype=np.float32) + 0.5) / values.size
+		x_new = (np.arange(count, dtype=np.float32) + 0.5) / count
+		values = np.interp(x_new, x_old, values, left=values[0], right=values[-1]).astype(np.float32)
+
+	# MusiK already outputs decibel-compressed 0..1 values. The v2 threshold
+	# of 0.12 and exponent >1 removed many quieter frequency bands entirely.
+	# Keep real silence silent, but amplify audible content adaptively.
+	peak = float(np.max(values))
+	if peak < 0.025:
+		return np.zeros(count, dtype=np.float32)
+	active = np.maximum(values - 0.018, 0.0)
+	ref_level = max(0.13, float(np.percentile(active, 78)))
+	gain = float(np.clip(0.80 / ref_level, 1.0, 4.6))
+	active = np.power(np.clip(active * gain, 0.0, 1.0), 0.80)
+
+	# Light circular blur removes single-bin jaggies without suppressing peaks.
+	result = 0.76 * active + 0.12 * (np.roll(active, 1) + np.roll(active, -1))
+	return np.ascontiguousarray(result, dtype=np.float32)
+
+
+def ring_profile(bands, samples: int = PROFILE_SAMPLES) -> np.ndarray:
+	"""Resample the FFT bands into a periodic 1D signal of ``samples`` values.
+
+	The output is sampled at GL texture pixel centres; indices 0 and ``samples``
+	are neighbours, so the surface and its normals are continuous at the seam.
+	"""
+	b = np.asarray(bands, dtype=np.float32).reshape(-1)
+	if b.size < 2:
+		raise ValueError("ring_profile requires at least two frequency bands")
+	if samples < b.size:
+		raise ValueError("ring_profile requires at least one sample per band")
+	# The original FFT bin values sit at centres of the 48 equal ring sectors.
+	pos = ((np.arange(samples, dtype=np.float32) + 0.5) / samples) * b.size - 0.5
+	left = np.floor(pos).astype(np.int32)
+	fraction = pos - left
+	# Smooth cubic interpolation has zero derivative at band centres, helping
+	# the chrome highlights avoid hard geometric creases.
+	w = fraction * fraction * (3.0 - 2.0 * fraction)
+	result = b[left % b.size] * (1.0 - w) + b[(left + 1) % b.size] * w
+	return np.ascontiguousarray(np.clip(result, 0.0, 1.0), dtype=np.float32)

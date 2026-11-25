@@ -1,0 +1,116 @@
+"""Qt adapter for Golden Torus v2 — FFT spectrum controls the outer ring."""
+
+from __future__ import annotations
+
+import math
+import time
+
+import moderngl
+import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter
+
+from .golden_torus import GoldenTorusRenderer, SPECTRUM_BANDS
+from .settings import EFFECTS
+from .visualizer import Visualizer
+
+
+class GoldenTorusVisualizer(Visualizer):
+	def __init__(self, parent=None):
+		super().__init__(parent)
+		self.effect = EFFECTS.index("Golden Torus")
+		self._renderer = None
+		self._pulse = 0.0
+		self._elapsed = 0.0
+		self._spectrum_target = np.zeros(SPECTRUM_BANDS, dtype=np.float32)
+		self._spectrum_motion = np.zeros(SPECTRUM_BANDS, dtype=np.float32)
+		self._spectrum_time = -100.0
+
+	def on_spectrum(self, levels, _maximum):
+		"""Receive MusiK's real-time logarithmic FFT levels (normally 48)."""
+		values = np.asarray(levels, dtype=np.float32).reshape(-1)
+		if not len(values):
+			self._spectrum_target.fill(0.0)
+			return
+		values = np.clip(np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+		if len(values) != SPECTRUM_BANDS:
+			# Support changing the main player's FFT-band count in Settings.
+			x_old = np.linspace(0.0, 1.0, len(values))
+			x_new = np.linspace(0.0, 1.0, SPECTRUM_BANDS)
+			values = np.interp(x_new, x_old, values).astype(np.float32)
+
+		# Remove the lowest noise floor; preserve variations among bands.
+		values = np.clip((values - 0.12) / 0.78, 0.0, 1.0) ** 1.25
+		# Circular neighbour smoothing (first and last bands meet at seam).
+		values = 0.64 * values + 0.18 * (np.roll(values, 1) + np.roll(values, -1))
+		self._spectrum_target[:] = values
+		self._spectrum_time = time.monotonic()
+
+	def initializeGL(self):
+		try:
+			self.ctx = moderngl.create_context(require=330)
+			self._renderer = GoldenTorusRenderer(self.ctx)
+			self.context().aboutToBeDestroyed.connect(self.cleanup)
+		except Exception as exc:
+			self.error = f"Golden Torus v2 OpenGL initialization failed: {exc}"
+			self.timer.stop()
+			self.failed.emit(self.error)
+
+	def paintGL(self):
+		if self.error or self._renderer is None:
+			painter = QPainter(self)
+			painter.fillRect(self.rect(), QColor("#08070e"))
+			painter.setPen(QColor("white"))
+			painter.drawText(self.rect().adjusted(30, 30, -30, -30),
+			                 Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+			                 self.error or "Golden Torus v2 renderer unavailable")
+			painter.end()
+			return
+
+		now = time.monotonic()
+		dt = max(0.0, min(0.10, now - self.last_frame))
+		self.last_frame = now
+		self._elapsed += dt
+
+		beat = float(self.strength) * math.exp(-max(0.0, now - self.beat_time) * 5.0)
+		beat = max(0.0, min(1.0, beat))
+		speed = 23.0 if beat > self._pulse else 5.2
+		self._pulse += (beat - self._pulse) * (1.0 - math.exp(-speed * dt))
+
+		# Strong attack, slower release, independent of frame rate.
+		if now - self._spectrum_time > 0.28:
+			target = np.zeros_like(self._spectrum_target)
+		else:
+			target = self._spectrum_target
+		rates = np.where(target > self._spectrum_motion, 24.0, 6.0)
+		self._spectrum_motion += (target - self._spectrum_motion) * (1.0 - np.exp(-rates * dt))
+
+		ratio = self.devicePixelRatioF()
+		size = (max(1, round(self.width() * ratio)),
+		        max(1, round(self.height() * ratio)))
+		try:
+			target_framebuffer = self.ctx.detect_framebuffer(self.defaultFramebufferObject())
+			self._renderer.draw(target_framebuffer, size, self._elapsed, self._pulse, self._spectrum_motion)
+		except Exception as exc:
+			self.error = f"Golden Torus v2 render failed: {exc}"
+			self.timer.stop()
+			self.failed.emit(self.error)
+
+	def reset(self):
+		super().reset()
+		self._pulse = 0.0
+		self._spectrum_target.fill(0.0)
+		self._spectrum_motion.fill(0.0)
+		self._spectrum_time = -100.0
+
+	def cleanup(self):
+		if self._renderer is None:
+			self.ctx = None
+			return
+		self.makeCurrent()
+		try:
+			self._renderer.release()
+			self._renderer = None
+			self.ctx = None
+		finally:
+			self.doneCurrent()

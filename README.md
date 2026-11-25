@@ -1,8 +1,8 @@
-# Linux Essentials Bootstrap v0.4.2
+# Linux Essentials Bootstrap v0.5.2
 
 A colorful, portable Bash toolkit installer for new **Arch Linux**, **Debian/Ubuntu** and **Fedora** installations. Its TrueColor **Summary** lists installed/missing/unavailable programs and lets you customize the selection before installing anything.
 
-The expanded catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and the six personal programs **CPROJ**, **CmdVault**, **NADAR**, **SRVPULSE**, **GitPublish** and **Cmedia**. It also catalogs `uv`, `python3`, `ffmpeg` and `chafa` for Cmedia installation. `bpytop` is superseded by `btop`.
+The expanded catalog includes `lsd`, `eza`, `fzf`, `fd`, `yazi`, `bat`, `ripgrep`, `pv`, `btop`, `fastfetch`, `hyfetch`, `zoxide`, `duf`, `dust`, `ncdu`, `jq`, `lazygit`, `git-delta`, `tmux`, **Byobu** and personal programs including **Taskman Neon**, **MusiK**, **CPROJ**, **CmdVault**, **NADAR**, **SRVPULSE**, **GitPublish** and **Cmedia**. It also catalogs `uv`, `python3`, `ffmpeg` and `chafa` for Cmedia installation. `bpytop` is superseded by `btop`.
 
 ## Fresh-install bootstrap
 
@@ -56,12 +56,15 @@ The following tools are installed for the invoking *normal* user, not into `/usr
 | --- | --- | --- |
 | CPROJ v0.2.1 | `~/.local/bin/cproj` | `~/.config/cproj/{cproj.bash,cproj.conf}` |
 | CmdVault | `~/.local/bin/cmdvault` | User-supplied source required (see below) |
+| Taskman Neon | `~/.local/bin/taskman` | C++20/FTXUI build; PostgreSQL connection configured separately |
+| Taskman legacy CLI | `~/.local/bin/taskman-cli` | Built from the same Taskman source |
+| MusiK | `~/.local/bin/musik` | Qt6 music player in an isolated uv environment |
 | NADAR v0.7.0 | `~/.local/bin/nadar` | `~/.config/nadar/nadar.conf`, `~/.config/systemd/user/nadar*.service` and `nadar-remote-watch.timer` |
 | GitPublish | `~/.local/bin/gitpublish` | Bundled Bash script; requires `git`, `gh` and `gh auth login` |
 | Cmedia | `~/.local/bin/cmedia` | Bundled V2 incremental renderer patch & installer; requires upstream source, `uv`, `git`, `python3`, `chafa` and `ffmpeg` |
 | SRVPULSE v0.1.0 | `~/.local/bin/srvpulse` | Python environment `~/.local/share/linux-essentials/venvs/srvpulse/` and `~/.config/srvpulse/config.toml` |
 
-The package *bundles source code* for CPROJ, NADAR, GitPublish and SRVPULSE under `vendor/`, so these can be installed offline **except for SRVPULSE's Python dependencies**, which need an available installer/cache or access to package repositories. For SRVPULSE/CmdVault Python projects, the script uses installed `uv` when available, otherwise `python3 -m venv` with pip. Cmedia specifically uses `uv tool install` and its upstream project requires Python 3.13+. On Debian/Ubuntu without `uv` you may need `python3-venv`/`python3-pip` first. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
+The package bundles source for its local tools under `vendor/`. Taskman builds with CMake and may fetch FTXUI if no system FTXUI package is installed. Selecting Taskman automatically selects CMake, a C++ compiler, zlib, PostgreSQL client headers and Git. Taskman requires an already running PostgreSQL server and a database; the installer does not initialize or alter PostgreSQL clusters. Set `TASKMAN_DATABASE_URL` if the default `dbname=taskman` connection is not appropriate. MusiK installs its locked Python dependencies through `uv` and needs a graphical desktop session with OpenGL support. **Run the installer as a normal user**, since it writes configuration under `$HOME` and invokes sudo only for operating-system packages.
 
 ### Cmedia: flicker-free browser and portable launcher
 

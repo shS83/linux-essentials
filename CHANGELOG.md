@@ -1,3 +1,11 @@
+## 0.5.2 — 2026-11-23
+
+- Add Taskman Neon to Desktop, Developer and All profiles.
+- Bundle Taskman's C++20 source and steampunk logo; build and install `taskman` plus legacy `taskman-cli`.
+- Select CMake, compiler, zlib, PostgreSQL client headers and Git when Taskman is selected.
+- Document that PostgreSQL service/database setup remains user-managed.
+- Add MusiK to Desktop, Developer and All with its source snapshot and locked uv environment.
+
 ## 0.5.1 — 2026-11-18
 
 - Bundle the exact `cmdvault.png` from shS83/cmdvault/root, verified against Git blob SHA1.

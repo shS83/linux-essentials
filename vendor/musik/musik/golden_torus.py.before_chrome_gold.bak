@@ -1,0 +1,275 @@
+"""Golden Torus v1: classic polished 3D gold + red/white checker reflections.
+
+The single torus only reacts to beats by scaling. The animation and the
+reflections run entirely in OpenGL 3.3; no Pygame or image textures required.
+"""
+
+from __future__ import annotations
+
+from array import array
+import math
+
+import moderngl
+
+
+# Future v2: a second, larger and thinner waveform torus may be added here.
+MAJOR_RADIUS = 1.07
+TUBE_RADIUS = 0.53  # Deliberately thick, with a smaller hole.
+FLOOR_Y = -1.48
+BASS_PULSE = 0.14
+
+VERTEX_SHADER = r"""
+#version 330 core
+in vec3 in_position;
+in vec3 in_normal;
+
+uniform float u_time;
+uniform float u_pulse;
+uniform float u_aspect;
+uniform int u_object; // 0 = torus, 1 = floor
+uniform int u_mirror; // 1 = torus reflected in floor
+
+out vec3 v_position;
+out vec3 v_normal;
+
+const float FLOOR_Y = -1.48;
+const vec3 CAMERA = vec3(0.0, 2.55, 7.0);
+const vec3 TARGET = vec3(0.0, -0.26, 0.0);
+
+void main() {
+	vec3 position = in_position;
+	vec3 normal = in_normal;
+	if (u_object == 0) {
+		float ax = 0.50 + u_time * 0.29;
+		float ay = 0.22 + u_time * 0.37;
+		float az = 0.09 * sin(u_time * 0.23);
+
+		mat3 rx = mat3(1., 0., 0.,
+		               0., cos(ax), sin(ax),
+		               0., -sin(ax), cos(ax));
+		mat3 ry = mat3(cos(ay), 0., -sin(ay),
+		               0., 1., 0.,
+		               sin(ay), 0., cos(ay));
+		mat3 rz = mat3(cos(az), sin(az), 0.,
+		               -sin(az), cos(az), 0.,
+		               0., 0., 1.);
+		mat3 rotation = rz * ry * rx;
+		position = (rotation * in_position) * (1.0 + u_pulse);
+		position.y += 0.18;
+		normal = rotation * normal;
+		if (u_mirror != 0) {
+			position.y = 2.0 * FLOOR_Y - position.y;
+			normal.y = -normal.y;
+		}
+	}
+
+	v_position = position;
+	v_normal = normalize(normal);
+
+	// Perspective camera, expressed directly to avoid a matrix dependency.
+	vec3 forward = normalize(TARGET - CAMERA);
+	vec3 right = normalize(cross(forward, vec3(0., 1., 0.)));
+	vec3 up = cross(right, forward);
+	vec3 relative = position - CAMERA;
+	float depth = dot(relative, forward);
+	float focal = 1.0 / tan(radians(48.0) * 0.5);
+	const float near = 0.1;
+	const float far = 75.0;
+	gl_Position = vec4(
+		dot(relative, right) * focal / max(u_aspect, 0.1),
+		dot(relative, up) * focal,
+		((far + near) / (far - near)) * depth - (2. * far * near) / (far - near),
+		depth
+	);
+}
+"""
+
+FRAGMENT_SHADER = r"""
+#version 330 core
+in vec3 v_position;
+in vec3 v_normal;
+out vec4 frag_color;
+
+uniform int u_object;
+uniform int u_mirror;
+
+const float FLOOR_Y = -1.48;
+const vec3 CAMERA = vec3(0.0, 2.55, 7.0);
+const vec3 SKY = vec3(0.022, 0.022, 0.034);
+
+vec3 checker(vec2 xz) {
+	// Every THIRD square is red. The rest are pearl white.
+	vec2 cell = floor(xz / 0.78);
+	float group = mod(cell.x + cell.y + 6000.0, 3.0);
+	vec3 red = vec3(0.89, 0.035, 0.075);
+	vec3 white = vec3(0.94, 0.94, 0.91);
+	vec3 color = mix(red, white, step(0.5, group));
+
+	// Almost invisible tile seams help anchor the grid in perspective.
+	vec2 f = fract(xz / 0.78);
+	float edge = min(min(f.x, f.y), min(1.0 - f.x, 1.0 - f.y));
+	color *= mix(0.85, 1.0, smoothstep(0.005, 0.040, edge));
+	return color;
+}
+
+void main() {
+	vec3 p = v_position;
+	vec3 n = normalize(v_normal);
+	vec3 view_direction = normalize(CAMERA - p);
+
+	if (u_object == 1) {
+		vec3 squares = checker(p.xz);
+		float distance_fade = exp(-0.030 * length(p.xz));
+		// No bass-driven lighting or animation in the floor.
+		float light = 0.79 + 0.17 * clamp(1.0 - length(p.xz) / 20.0, 0.0, 1.0);
+		float shadow = 1.0 - 0.22 * exp(-0.42 * dot(p.xz, p.xz));
+		vec3 color = mix(SKY, squares * light * shadow, distance_fade);
+		// Semi-transparent near the object to reveal its mirror image.
+		float near_reflection = exp(-0.21 * dot(p.xz, p.xz));
+		float opacity = mix(1.0, 0.69, near_reflection);
+		frag_color = vec4(color, opacity);
+		return;
+	}
+
+	// Two broad, fixed studio lights; the object rotates underneath them.
+	vec3 l1 = normalize(vec3(-3.5, 6.0, 5.0) - p);
+	vec3 l2 = normalize(vec3(4.0, 2.0, -3.5) - p);
+	float d1 = max(dot(n, l1), 0.0);
+	float d2 = max(dot(n, l2), 0.0);
+	vec3 h1 = normalize(l1 + view_direction);
+	vec3 h2 = normalize(l2 + view_direction);
+	float s1 = pow(max(dot(n, h1), 0.0), 75.0);
+	float s2 = pow(max(dot(n, h2), 0.0), 32.0);
+
+	// Champagne gold, deliberately less orange than amber/copper.
+	vec3 metal = vec3(0.84, 0.72, 0.37);
+	vec3 color = metal * (0.20 + 0.64 * d1 + 0.21 * d2);
+	color += vec3(1.0, 0.985, 0.86) * (0.94 * s1 + 0.28 * s2);
+
+	// Actual reflected view of the checker plane on the curved gold surface.
+	// Phong alone cannot reflect geometry; this ray/plane intersection can.
+	vec3 reflected_ray = reflect(-view_direction, n);
+	if (reflected_ray.y < -0.018 && p.y > FLOOR_Y) {
+		float t = (FLOOR_Y - p.y) / reflected_ray.y;
+		if (t > 0.0 && t < 85.0) {
+			vec2 hit = p.xz + t * reflected_ray.xz;
+			vec3 reflection = checker(hit);
+			float rim = pow(1.0 - clamp(dot(n, view_direction), 0.0, 1.0), 2.4);
+			float visibility = 1.0 - smoothstep(8.0, 60.0, t);
+			float contribution = (0.28 + 0.42 * rim) * visibility;
+			vec3 gold_tint = vec3(1.0, 0.93, 0.69);
+			color = mix(color, reflection * gold_tint * 0.98, contribution);
+		}
+	}
+
+	// Mirror pass lies below the real floor and shows through translucency.
+	if (u_mirror != 0) {
+		color *= vec3(0.56, 0.53, 0.47);
+	}
+	// Restrained highlight tone mapping, not orange glow/bloom.
+	color = color / (color + vec3(0.16));
+	color = pow(max(color, vec3(0.0)), vec3(0.83));
+	frag_color = vec4(color, 1.0);
+}
+"""
+
+
+def torus_mesh(rings: int = 144, sides: int = 64):
+	"""Return interleaved positions/normals and outward-facing triangle indices."""
+	if rings < 3 or sides < 3:
+		raise ValueError("Torus needs >=3 rings and >=3 sides")
+	vertices = array("f")
+	indices = array("I")
+	for i in range(rings + 1):
+		u = 2 * math.pi * i / rings
+		cu, su = math.cos(u), math.sin(u)
+		for j in range(sides + 1):
+			v = 2 * math.pi * j / sides
+			cv, sv = math.cos(v), math.sin(v)
+			radius = MAJOR_RADIUS + TUBE_RADIUS * cv
+			vertices.extend((radius * cu, TUBE_RADIUS * sv, radius * su,
+			                 cv * cu, sv, cv * su))
+	for i in range(rings):
+		for j in range(sides):
+			a = i * (sides + 1) + j
+			b = a + sides + 1
+			c = a + 1
+			d = b + 1
+			indices.extend((a, c, b, b, c, d))
+	return vertices, indices
+
+
+def floor_mesh():
+	spread = 70.0
+	vertices = array("f")
+	for x, z in ((-spread, -spread), (spread, -spread),
+	             (spread, spread), (-spread, spread)):
+		vertices.extend((x, FLOOR_Y, z, 0.0, 1.0, 0.0))
+	return vertices, array("I", (0, 2, 1, 0, 3, 2))
+
+
+class GoldenTorusRenderer:
+	"""OpenGL 3.3 renderer; draw into MusiK's current Qt framebuffer."""
+
+	def __init__(self, ctx):
+		self.ctx = ctx
+		self.program = ctx.program(vertex_shader=VERTEX_SHADER,
+		                           fragment_shader=FRAGMENT_SHADER)
+		self._buffers = []
+		self._vaos = []
+		self.torus = self._make_mesh(*torus_mesh())
+		self.floor = self._make_mesh(*floor_mesh())
+
+	def _make_mesh(self, vertices, indices):
+		vbo = self.ctx.buffer(vertices.tobytes())
+		ibo = self.ctx.buffer(indices.tobytes())
+		vao = self.ctx.vertex_array(self.program,
+		                            [(vbo, "3f 3f", "in_position", "in_normal")],
+		                            index_buffer=ibo)
+		self._buffers.extend((vbo, ibo))
+		self._vaos.append(vao)
+		return vao
+
+	def draw(self, target, size, elapsed: float, bass_pulse: float):
+		width, height = max(1, size[0]), max(1, size[1])
+		target.use()
+		self.ctx.viewport = (0, 0, width, height)
+		target.clear(0.022, 0.022, 0.034, 1.0, depth=1.0)
+		self.ctx.enable(moderngl.DEPTH_TEST)
+		self.ctx.disable(moderngl.CULL_FACE)
+		self.ctx.disable(moderngl.BLEND)
+		self.program["u_time"].value = elapsed
+		self.program["u_aspect"].value = width / height
+		self.program["u_pulse"].value = BASS_PULSE * max(0.0, min(1.0, bass_pulse))
+
+		# Mirror image behind floor, then transparent tiled floor, then real torus.
+		self.program["u_object"].value = 0
+		self.program["u_mirror"].value = 1
+		self.torus.render()
+
+		self.ctx.enable(moderngl.BLEND)
+		self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+		self.program["u_object"].value = 1
+		self.program["u_mirror"].value = 0
+		self.floor.render()
+		self.ctx.disable(moderngl.BLEND)
+
+		self.program["u_object"].value = 0
+		self.torus.render()
+
+		self.ctx.disable(moderngl.DEPTH_TEST)
+
+	def release(self):
+		for vao in self._vaos:
+			vao.release()
+		for buffer in self._buffers:
+			buffer.release()
+		self.program.release()
+		self._vaos.clear()
+		self._buffers.clear()
+	def release(self):
+		for vao in self._vaos:
+			vao.release()
+		for buffer in self._buffers:
+			buffer.release()
+		self.program.release()

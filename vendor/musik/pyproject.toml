@@ -1,0 +1,10 @@
+[project]
+name = "musiK"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "moderngl>=5.13.0",
+    "numpy>=2.2",
+    "pyside6>=6.8",
+    "pygame-ce",
+]

@@ -1,0 +1,303 @@
+"""Golden Torus v1: classic polished 3D gold + red/white checker reflections.
+
+The single torus only reacts to beats by scaling. The animation and the
+reflections run entirely in OpenGL 3.3; no Pygame or image textures required.
+"""
+
+from __future__ import annotations
+
+from array import array
+import math
+
+import moderngl
+
+
+# Future v2: a second, larger and thinner waveform torus may be added here.
+MAJOR_RADIUS = 1.07
+TUBE_RADIUS = 0.53  # Deliberately thick, with a smaller hole.
+FLOOR_Y = -1.48
+BASS_PULSE = 0.14
+
+VERTEX_SHADER = r"""
+#version 330 core
+in vec3 in_position;
+in vec3 in_normal;
+
+uniform float u_time;
+uniform float u_pulse;
+uniform float u_aspect;
+uniform int u_object; // 0 = torus, 1 = floor
+uniform int u_mirror; // 1 = torus reflected in floor
+
+out vec3 v_position;
+out vec3 v_normal;
+
+const float FLOOR_Y = -1.48;
+const vec3 CAMERA = vec3(0.0, 2.55, 7.0);
+const vec3 TARGET = vec3(0.0, -0.26, 0.0);
+
+void main() {
+	vec3 position = in_position;
+	vec3 normal = in_normal;
+	if (u_object == 0) {
+		float ax = 0.50 + u_time * 0.29;
+		float ay = 0.22 + u_time * 0.37;
+		float az = 0.09 * sin(u_time * 0.23);
+
+		mat3 rx = mat3(1., 0., 0.,
+		               0., cos(ax), sin(ax),
+		               0., -sin(ax), cos(ax));
+		mat3 ry = mat3(cos(ay), 0., -sin(ay),
+		               0., 1., 0.,
+		               sin(ay), 0., cos(ay));
+		mat3 rz = mat3(cos(az), sin(az), 0.,
+		               -sin(az), cos(az), 0.,
+		               0., 0., 1.);
+		mat3 rotation = rz * ry * rx;
+		position = (rotation * in_position) * (1.0 + u_pulse);
+		position.y += 0.18;
+		normal = rotation * normal;
+		if (u_mirror != 0) {
+			position.y = 2.0 * FLOOR_Y - position.y;
+			normal.y = -normal.y;
+		}
+	}
+
+	v_position = position;
+	v_normal = normalize(normal);
+
+	// Perspective camera, expressed directly to avoid a matrix dependency.
+	vec3 forward = normalize(TARGET - CAMERA);
+	vec3 right = normalize(cross(forward, vec3(0., 1., 0.)));
+	vec3 up = cross(right, forward);
+	vec3 relative = position - CAMERA;
+	float depth = dot(relative, forward);
+	float focal = 1.0 / tan(radians(48.0) * 0.5);
+	const float near = 0.1;
+	const float far = 75.0;
+	gl_Position = vec4(
+		dot(relative, right) * focal / max(u_aspect, 0.1),
+		dot(relative, up) * focal,
+		((far + near) / (far - near)) * depth - (2. * far * near) / (far - near),
+		depth
+	);
+}
+"""
+
+FRAGMENT_SHADER = r"""
+#version 330 core
+in vec3 v_position;
+in vec3 v_normal;
+out vec4 frag_color;
+
+uniform int u_object;
+uniform int u_mirror;
+
+const float FLOOR_Y = -1.48;
+const vec3 CAMERA = vec3(0.0, 2.55, 7.0);
+const vec3 BACKGROUND = vec3(0.012, 0.014, 0.029);
+
+// Pale yellow-chrome, not painted beige or copper.
+const vec3 GOLD_FILTER = vec3(1.00, 0.87, 0.47);
+const vec3 TILE_RED = vec3(0.87, 0.020, 0.048);
+const vec3 TILE_WHITE = vec3(0.94, 0.94, 0.92);
+
+vec3 checker(vec2 xz) {
+	vec2 uv = xz / 0.78;
+	vec2 cells = floor(uv);
+	float group = mod(cells.x + cells.y + 6000.0, 3.0);
+	vec3 square = mix(TILE_RED, TILE_WHITE, step(0.5, group));
+
+	// A third of the tiles are red. At grazing angles, one pixel
+	// spans many tiles. Fade to the average rather than aliasing into
+	// orange staircases / concentric moire rings.
+	vec3 average_square = (TILE_RED + 2.0 * TILE_WHITE) / 3.0;
+	vec2 pixel_footprint = fwidth(uv);
+	float footprint = max(pixel_footprint.x, pixel_footprint.y);
+	float clarity = 1.0 - smoothstep(0.12, 0.85, footprint);
+	vec3 color = mix(average_square, square, clarity);
+
+	vec2 f = fract(uv);
+	float edge = min(min(f.x, f.y), min(1.0 - f.x, 1.0 - f.y));
+	color *= 1.0 - clarity * 0.09 * (1.0 - smoothstep(0.0, 0.025, edge));
+	return color;
+}
+
+vec3 studio_environment(vec3 r) {
+	// Based on MusiK's Chrome Sphere approach: reflections define the
+	// material. Dark gaps between large light sources are essential.
+	float h = clamp(0.50 + 0.5 * r.y, 0.0, 1.0);
+	vec3 env = mix(vec3(0.012, 0.014, 0.025),
+	               vec3(0.044, 0.052, 0.076), h);
+	// Reflected horizon provides a soft band on the chrome.
+	env += vec3(0.24, 0.27, 0.32) * exp(-abs(r.y) * 8.0);
+	// Large studio panels, including a narrow white highlight.
+	env += vec3(1.85, 1.82, 1.65) *
+	       pow(max(dot(r, normalize(vec3(-1.3, 1.8, 1.0))), 0.0), 22.0);
+	env += vec3(0.70, 0.83, 1.05) *
+	       pow(max(dot(r, normalize(vec3(1.5, 0.7, 0.2))), 0.0), 36.0);
+	env += vec3(1.10, 1.05, 0.93) *
+	       smoothstep(0.982, 0.998,
+	                  dot(r, normalize(vec3(0.2, 1.0, -0.8))));
+	return env;
+}
+
+void main() {
+	vec3 p = v_position;
+	vec3 n = normalize(v_normal);
+	vec3 view_direction = normalize(CAMERA - p);
+
+	if (u_object == 1) {
+		vec3 squares = checker(p.xz);
+		float distance_fade = exp(-0.030 * length(p.xz));
+		float light = 0.78 + 0.18 * clamp(1.0 - length(p.xz) / 20.0, 0.0, 1.0);
+		float shadow = 1.0 - 0.20 * exp(-0.42 * dot(p.xz, p.xz));
+		vec3 color = mix(BACKGROUND, squares * light * shadow, distance_fade);
+		float near_reflection = exp(-0.21 * dot(p.xz, p.xz));
+		float opacity = mix(1.0, 0.69, near_reflection);
+		frag_color = vec4(color, opacity);
+		return;
+	}
+
+	// All directions are reflected, as in Chrome Sphere. Phong adds
+	// crisp highlights, but the base is NOT a bright diffuse gold.
+	vec3 r = reflect(-view_direction, n);
+	vec3 environment = studio_environment(r);
+
+	// Analytical ray / floor intersection on the curved torus surface.
+	// Compute the sample continuously before the condition so fwidth()
+	// in checker() is defined across neighbouring fragments.
+	float denom = max(abs(r.y), 0.018);
+	float hit_distance = abs(FLOOR_Y - p.y) / denom;
+	vec2 hit = p.xz + hit_distance * r.xz;
+	vec3 reflected_tiles = checker(hit);
+
+	if (r.y < -0.018 && p.y > FLOOR_Y && hit_distance < 85.0) {
+		float visibility = 1.0 - smoothstep(12.0, 55.0, hit_distance);
+		// Tiled floor is reflected, with dark surroundings in the gaps.
+		// Do not flood the whole metal with flat white light.
+		vec3 floor_reflection = reflected_tiles * 0.71;
+		environment = mix(environment, floor_reflection, 0.90 * visibility);
+	}
+
+	float ndv = clamp(dot(n, view_direction), 0.0, 1.0);
+	float fresnel = pow(1.0 - ndv, 5.0);
+	vec3 color = environment * GOLD_FILTER * (0.92 + 0.12 * fresnel);
+
+	// Crisp Phong glints on top of the environment. A little neutral
+	// reflection preserves the polished-chrome impression.
+	vec3 l1 = normalize(vec3(-3.5, 6.0, 5.0) - p);
+	vec3 l2 = normalize(vec3(4.0, 2.0, -3.5) - p);
+	vec3 h1 = normalize(l1 + view_direction);
+	vec3 h2 = normalize(l2 + view_direction);
+	float s1 = pow(max(dot(n, h1), 0.0), 115.0);
+	float s2 = pow(max(dot(n, h2), 0.0), 48.0);
+	color += vec3(1.0, 0.98, 0.83) * (0.30 * s1 + 0.11 * s2);
+	color += vec3(0.020, 0.015, 0.004) * max(dot(n, l1), 0.0);
+
+	if (u_mirror != 0) {
+		color *= vec3(0.57, 0.54, 0.46);
+	}
+
+	// Chrome Sphere's highlight-friendly Reinhard-like tone mapping.
+	// Old color/(color+0.16) made almost everything beige/white.
+	color = color / (vec3(1.0) + 0.35 * color);
+	color = pow(max(color, vec3(0.0)), vec3(0.87));
+	frag_color = vec4(color, 1.0);
+}
+"""
+
+
+def torus_mesh(rings: int = 144, sides: int = 64):
+	"""Return interleaved positions/normals and outward-facing triangle indices."""
+	if rings < 3 or sides < 3:
+		raise ValueError("Torus needs >=3 rings and >=3 sides")
+	vertices = array("f")
+	indices = array("I")
+	for i in range(rings + 1):
+		u = 2 * math.pi * i / rings
+		cu, su = math.cos(u), math.sin(u)
+		for j in range(sides + 1):
+			v = 2 * math.pi * j / sides
+			cv, sv = math.cos(v), math.sin(v)
+			radius = MAJOR_RADIUS + TUBE_RADIUS * cv
+			vertices.extend((radius * cu, TUBE_RADIUS * sv, radius * su,
+			                 cv * cu, sv, cv * su))
+	for i in range(rings):
+		for j in range(sides):
+			a = i * (sides + 1) + j
+			b = a + sides + 1
+			c = a + 1
+			d = b + 1
+			indices.extend((a, c, b, b, c, d))
+	return vertices, indices
+
+
+def floor_mesh():
+	spread = 70.0
+	vertices = array("f")
+	for x, z in ((-spread, -spread), (spread, -spread),
+	             (spread, spread), (-spread, spread)):
+		vertices.extend((x, FLOOR_Y, z, 0.0, 1.0, 0.0))
+	return vertices, array("I", (0, 2, 1, 0, 3, 2))
+
+
+class GoldenTorusRenderer:
+	"""OpenGL 3.3 renderer; draw into MusiK's current Qt framebuffer."""
+
+	def __init__(self, ctx):
+		self.ctx = ctx
+		self.program = ctx.program(vertex_shader=VERTEX_SHADER,
+		                           fragment_shader=FRAGMENT_SHADER)
+		self._buffers = []
+		self._vaos = []
+		self.torus = self._make_mesh(*torus_mesh())
+		self.floor = self._make_mesh(*floor_mesh())
+
+	def _make_mesh(self, vertices, indices):
+		vbo = self.ctx.buffer(vertices.tobytes())
+		ibo = self.ctx.buffer(indices.tobytes())
+		vao = self.ctx.vertex_array(self.program,
+		                            [(vbo, "3f 3f", "in_position", "in_normal")],
+		                            index_buffer=ibo)
+		self._buffers.extend((vbo, ibo))
+		self._vaos.append(vao)
+		return vao
+
+	def draw(self, target, size, elapsed: float, bass_pulse: float):
+		width, height = max(1, size[0]), max(1, size[1])
+		target.use()
+		self.ctx.viewport = (0, 0, width, height)
+		target.clear(0.022, 0.022, 0.034, 1.0, depth=1.0)
+		self.ctx.enable(moderngl.DEPTH_TEST)
+		self.ctx.disable(moderngl.CULL_FACE)
+		self.ctx.disable(moderngl.BLEND)
+		self.program["u_time"].value = elapsed
+		self.program["u_aspect"].value = width / height
+		self.program["u_pulse"].value = BASS_PULSE * max(0.0, min(1.0, bass_pulse))
+
+		# Mirror image behind floor, then transparent tiled floor, then real torus.
+		self.program["u_object"].value = 0
+		self.program["u_mirror"].value = 1
+		self.torus.render()
+
+		self.ctx.enable(moderngl.BLEND)
+		self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+		self.program["u_object"].value = 1
+		self.program["u_mirror"].value = 0
+		self.floor.render()
+		self.ctx.disable(moderngl.BLEND)
+
+		self.program["u_object"].value = 0
+		self.torus.render()
+
+		self.ctx.disable(moderngl.DEPTH_TEST)
+
+	def release(self):
+		for vao in self._vaos:
+			vao.release()
+		for buffer in self._buffers:
+			buffer.release()
+		self.program.release()
+		self._vaos.clear()
+		self._buffers.clear()

@@ -1,0 +1,83 @@
+"""Qt/MusiK adapter for the Golden Torus v1 visualizer."""
+
+from __future__ import annotations
+
+import math
+import time
+
+import moderngl
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter
+
+from .golden_torus import GoldenTorusRenderer
+from .settings import EFFECTS
+from .visualizer import Visualizer
+
+
+class GoldenTorusVisualizer(Visualizer):
+	def __init__(self, parent=None):
+		super().__init__(parent)
+		self.effect = EFFECTS.index("Golden Torus")
+		self._renderer = None
+		self._pulse = 0.0
+		self._elapsed = 0.0
+
+	def initializeGL(self):
+		try:
+			self.ctx = moderngl.create_context(require=330)
+			self._renderer = GoldenTorusRenderer(self.ctx)
+			self.context().aboutToBeDestroyed.connect(self.cleanup)
+		except Exception as exc:
+			self.error = f"Golden Torus OpenGL initialization failed: {exc}"
+			self.timer.stop()
+			self.failed.emit(self.error)
+
+	def paintGL(self):
+		if self.error or self._renderer is None:
+			painter = QPainter(self)
+			painter.fillRect(self.rect(), QColor("#08070e"))
+			painter.setPen(QColor("white"))
+			painter.drawText(self.rect().adjusted(30, 30, -30, -30),
+			                 Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+			                 self.error or "Golden Torus renderer unavailable")
+			painter.end()
+			return
+
+		now = time.monotonic()
+		dt = max(0.0, min(0.10, now - self.last_frame))
+		self.last_frame = now
+		self._elapsed += dt
+
+		# Musical input affects ONLY the object's size.
+		# A quick attack + slower release creates a nice bass heartbeat.
+		beat = float(self.strength) * math.exp(-max(0.0, now - self.beat_time) * 5.0)
+		beat = max(0.0, min(1.0, beat))
+		speed = 23.0 if beat > self._pulse else 5.2
+		self._pulse += (beat - self._pulse) * (1.0 - math.exp(-speed * dt))
+
+		ratio = self.devicePixelRatioF()
+		size = (max(1, round(self.width() * ratio)),
+		        max(1, round(self.height() * ratio)))
+		try:
+			target = self.ctx.detect_framebuffer(self.defaultFramebufferObject())
+			self._renderer.draw(target, size, self._elapsed, self._pulse)
+		except Exception as exc:
+			self.error = f"Golden Torus render failed: {exc}"
+			self.timer.stop()
+			self.failed.emit(self.error)
+
+	def reset(self):
+		super().reset()
+		self._pulse = 0.0
+
+	def cleanup(self):
+		if self._renderer is None:
+			self.ctx = None
+			return
+		self.makeCurrent()
+		try:
+			self._renderer.release()
+			self._renderer = None
+			self.ctx = None
+		finally:
+			self.doneCurrent()
